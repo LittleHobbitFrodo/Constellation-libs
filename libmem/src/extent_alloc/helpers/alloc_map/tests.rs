@@ -154,145 +154,22 @@ fn extract_exact() {
 }
 
 
-#[ignore = "TODO"]
 #[test]
 fn extract_extent_part() {
 
-    let mut rand = TestRng::new();
-
-    for _ in 0..1000 {
-
-        let count = 10;//rand.next_range(256..512);
-        let exts = random_extents::<2048>(count, &mut rand);
-
-        let mut allocator = RawExtentAlloc::uninit();
-        let init_result = unsafe { allocator.initialize(exts.iter().cloned()) };
-        assert!(matches!(init_result, Ok(())));
-
-        let (mut free, used) = distinguish_free_and_used(exts);
+    //let mut rand = TestRng::new();
 
 
-        for _ in 0..150 {
-
-            let idx = rand.next_range(..free.len());
-
-            println!("before: {:?}\n{:?}\n\n\n", free, allocator.free_map());
-
-            let big = MutableExtent::from_regular(free.remove(idx));
-
-            let small: MutableExtent<1024> = {
-                let address = rand.next_range(big.address().get() as usize..big.end_address().get() as usize+1024) as u64;
-                let address = AlignedNonNull::new_down(NonZero::new(address).unwrap()).unwrap();
-
-                let size = rand.next_range(1..(big.end_address().get().saturating_sub(address.get()) / 1024) as usize) as u64;
-                let size = NonZero::new(size).unwrap();
-
-                MutableExtent::new(address, size)
-            };
-
-            match unsafe { allocator.free_map_mut() }.extract_extent_part(big.clone(), small.clone()) {
-                Ok(_) => assert!(small.fits_into(&big)),
-                Err(e) => {
-                    assert!(!small.fits_into(&big));
-                    assert!(matches!(e, PartExtractionError::PartDoesNotFit));
-                    continue;
-                }
-            }
-
-            let RemainingExtents { left: front, right: remainder } = match small.remove_from(big) {
-                Ok(rem) => rem,
-                Err(_) => panic!("failed to remove small from big"),
-            };
-
-            if let Some(front) = front {
-                free.push(front.into_regular());
-            }
-
-            if let Some(rem) = remainder {
-                free.push(rem.into_regular());
-            }
-
-            println!("after: {:?}\n{:?}\n\n\n", free, allocator.free_map());
-
-            verify_map(&free, allocator.free_map());
-
-
-            todo!();
-
-            if free.is_empty() { break }
-
-        }
-
-    }
-
+    todo!();
 }
 
 
 
-/*#[ignore = "todo"]
-#[test]
-fn extract_from() {
-
-    let mut rand = TestRng::new();
-
-    for _ in 0..500 {
-
-        let count = rand.next_range(MIN_EXT_COUNT..MAX_EXT_COUNT);
-        let exts = random_extents(count, &mut rand);
-
-        let allocator: CachedExtentAllocator<1024> = CachedExtentAllocator::uninit();
-        assert!(matches!(unsafe { allocator.initialize(exts.iter().cloned()) }, Ok(()) ));
-
-        let (mut free, mut used) = distinguish_free_and_used(exts);
-
-        let mut alloc = allocator.map.lock();
-
-        for _ in 0..150 {
-            let idx = rand.next_range(..free.len());
-
-            let to_extract = free.remove(idx);
-
-            if to_extract.size().get() == 1 { continue; }
-
-            let layout = {
-                let count = NonZero::new(to_extract.size().get() / 2).unwrap();
-                ExtentLayout::from_pages(count).expect("failed to construct ExtentLayout")
-            };
-
-            insert_extent_to_fragmented(&to_extract, &mut alloc.used)
-                .expect("insert_extent_to_fragmented() returned Err");
-
-            used.push(to_extract.clone());
-
-            verify_map(&used, &alloc.used);
-
-            let extracted = extract_extent_from(MutableExtent::from(to_extract.clone()), layout, &mut alloc.free)
-                .expect("extract_exact_extent_from() returned Err");
-
-            let put_back = {
-
-                let addr = to_extract.address().aligned_add(extracted.size().get() as usize);
-                let size = NonZero::new(to_extract.size().get() - extracted.size().get()).unwrap();
-                RawExtent::new(addr, size)
-            };
-
-            free.push(put_back);
-
-            println!("vec: {}", free.len());
-            println!("map: {}:{}", alloc.free.map.len(),
-                alloc.free.size_index.iter().map(|(_, by_align)| by_align.iter().map(|(_, addr)| addr.len() ).sum::<usize>() ).sum::<usize>()
-            );
-
-            verify_map(&free, &alloc.free);
-            //verify_map(&used, &alloc.used);
 
 
-            if free.is_empty() { break }
 
-        }
-    }
 
-}*/
+
 
 
 

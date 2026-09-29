@@ -22,8 +22,9 @@ use crate::{cold_panic, extent_alloc::{
 /// This implementation is optimized only for allocation and deallocation.
 /// - Deallocation of parts of allocated frames is also supported!
 ///
-/// > Note: The generic constant `ALIGN` must be a power of
-/// two; violating this rule may result in undefined behavior
+/// > **SAFETY**: Due to implementation limitations, the generic constant
+/// ALIGN must be a power of two and must be greater than or equal
+/// to 64. Violating this rule will result in undefined behavior.
 pub struct ExtentAllocator<const ALIGN: usize,
     Ext: Extent<ALIGN> + RawExtent<ALIGN> = InternalExtent<ALIGN>,
     Lay: LayoutDescriptor<ALIGN> = ExtentLayout<ALIGN>>

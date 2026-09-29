@@ -1,6 +1,12 @@
 #[cfg(test)]
 use libtest::TestRng;
 
+
+
+
+
+//  TODO: move back to `libmem`
+
 use libmem::Alignment;
 
 use super::PhysicalLayout;
@@ -41,7 +47,7 @@ impl LayoutDescriptor<PAGE_SIZE> for PhysicalLayout {
         }
     }
 
-    fn split(&mut self) -> Option<Self> {
+    /*fn split(&mut self) -> Option<Self> {
 
         let count = self.size().get();
 
@@ -86,7 +92,7 @@ impl LayoutDescriptor<PAGE_SIZE> for PhysicalLayout {
             //  because it is less than origin page count
             Some(Self::from_pages_unchecked(new_chunk))
         }
-    }
+    }*/
 
 }
 

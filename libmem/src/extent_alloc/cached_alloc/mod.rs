@@ -7,6 +7,7 @@ use crate::{assume, cold_panic, extent_alloc::{
 
 use alloc::vec::Vec;
 
+
 /// An implementation of an extent allocator that operates with
 /// a predetermined page size, various sizes of allocated blocks,
 /// and any number of memory blocks.
@@ -21,8 +22,9 @@ use alloc::vec::Vec;
 /// > **IMPORTANT**: `CachedExtentAllocator` uses the heap,
 /// therefore the heap must be initialized before the allocator
 ///
-/// > **Note**: The generic constant `ALIGN` must be a power of
-/// two; violating this rule may result in undefined behavior
+/// > **SAFETY**: Due to implementation limitations, the generic constant
+/// ALIGN must be a power of two and must be greater than or equal
+/// to 64. Violating this rule will result in undefined behavior.
 pub struct CachedExtentAllocator<const ALIGN: usize,
     Ext: Extent<ALIGN> + RawExtent<ALIGN> = InternalExtent<ALIGN>,
     Lay: LayoutDescriptor<ALIGN> = ExtentLayout<ALIGN>,

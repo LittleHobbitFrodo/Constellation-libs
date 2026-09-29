@@ -170,7 +170,6 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
 
 
 
-
     /// Removes the given extent from `self` without checking
     /// whether the extent fits into `self`
     /// - Returns the extents created by removing `self`

@@ -1,13 +1,15 @@
-/*mod physical;
-pub use physical::*;*/
 
-use crate::AlignedAddress;
-#[cfg(debug_assertions)]
+
 use core::fmt::Debug;
 use core::num::NonZero;
 
+mod default;
+pub use default::ExtentLayout;
 
-/// Marks all memory layout descriptors to work with the `ExtentAllocator`
+
+/// Defines the memory layout when allocating a extent. All extent
+/// layout descriptors must satisfy one invariant: **both their size
+/// and alignment must be non-zero**
 pub trait LayoutDescriptor<const ALIGN: usize> where Self: Sized + Clone {
     /// Maximum possible amount of pages that the descriptor can hold
     const MAX_PAGE_COUNT: u64;
@@ -31,7 +33,7 @@ pub trait LayoutDescriptor<const ALIGN: usize> where Self: Sized + Clone {
     /// - This may be asserted by the allocator
     fn align(&self) -> NonZero<u64>;
 
-    /// Splits a bigger extent into smaller pieces if it cannot be allocated
+    /*/// Splits a bigger extent into smaller pieces if it cannot be allocated
     ///
     /// # Behaviour
     /// This function is invoked by the `ExtentAllocator` when the current
@@ -44,7 +46,7 @@ pub trait LayoutDescriptor<const ALIGN: usize> where Self: Sized + Clone {
     /// that can be easily grabbed by the current paging implementaion
     ///
     /// Returns `None` if the smaller frame size cannot be found
-    fn split(&mut self) -> Option<Self>;
+    fn split(&mut self) -> Option<Self>;*/
 }
 
 /// An error type returned by `LayoutDescriptor::from_pages()`
@@ -54,61 +56,5 @@ impl core::fmt::Debug for IntegerOverflow {
     #[inline(always)]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "integer overflow")
-    }
-}
-
-
-/// Used by the `ExtentAllocator` to allocate contignous extents
-/// - The layout alignment is always 1
-#[repr(transparent)]
-#[derive(Clone)]
-pub struct ExtentLayout<const ALIGN: usize>(pub(crate) NonZero<u64>);
-
-impl<const ALIGN: usize> LayoutDescriptor<ALIGN> for ExtentLayout<ALIGN> {
-
-    const MAX_PAGE_COUNT: u64 = 0xFFFFFFFFFFFFF;
-
-    type Err = IntegerOverflow;
-
-    #[inline(always)]
-    fn size(&self) -> NonZero<u64> { self.0 }
-
-    #[inline(always)]
-    fn from_pages(count: NonZero<u64>) -> Result<Self, Self::Err> {
-        if count.get() <= Self::MAX_PAGE_COUNT {
-            Ok(Self(count))
-        } else {
-            Err(IntegerOverflow)
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn from_pages_unchecked(count: NonZero<u64>) -> Self { Self(count) }
-
-    #[inline(always)]
-    fn align(&self) -> NonZero<u64> {
-        unsafe {
-            NonZero::new_unchecked(1)
-        }
-    }
-
-    fn split(&mut self) -> Option<Self> {
-        let half = NonZero::new(self.0.get().saturating_div(2))?;
-
-        *self = unsafe {
-            //  safety:
-            let count = NonZero::new_unchecked(self.0.get() - half.get());
-            Self::from_pages_unchecked(count)
-        };
-
-        Some(Self(half))
-    }
-
-}
-
-#[cfg(debug_assertions)]
-impl<const ALIGN: usize> Debug for ExtentLayout<ALIGN> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "ExtentLayout {{ size: {}, align: {} }}", self.size(), self.align())
     }
 }

@@ -19,7 +19,6 @@ where Self: Sized {
     /// Used to initialize the cache at compiltime
     const NEW: Self;
 
-
     /// Attempts to find a suitable extent for allocation
     ///
     /// # Extent allocation
@@ -104,5 +103,5 @@ pub struct SourceAllocation<const ALIGN: usize> {
 }
 
 
-mod defaults;
-pub use defaults::*;
+mod default;
+pub use default::*;

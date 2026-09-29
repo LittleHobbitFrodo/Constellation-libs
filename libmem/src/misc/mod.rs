@@ -80,13 +80,13 @@ macro_rules! impl_alignment {
         impl<T> AlignmentMarker for $type {}
         impl<T> Alignment for $type {
             #[inline(always)]
-            fn align_up(self, align: usize) -> Self { (((self as usize).saturating_add(((align as usize)-1))) & !((align as usize)-1)) as $type }
+            fn align_up(self, align: usize) -> Self { (((self as usize).saturating_add((align-1))) & !(align-1)) as $type }
 
             #[inline(always)]
-            fn align_down(self, align: usize) -> Self { (self as usize & !((align as usize)-1)) as $type }
+            fn align_down(self, align: usize) -> Self { (self as usize & !(align-1)) as $type }
 
             #[inline(always)]
-            fn is_aligned_to(&self, align: usize) -> bool { (*self as usize & !((align as usize)-1)) as $type == *self }
+            fn is_aligned_to(&self, align: usize) -> bool { (*self as usize & !(align-1)) as $type == *self }
 
             #[inline(always)]
             fn alignment(&self) -> Self { (*self as usize).isolate_lowest_one() as Self }
@@ -109,7 +109,7 @@ macro_rules! impl_page_alignment {
             fn page_align_down(self) -> Self { self & !((PAGE_SIZE as $type)-1) }
 
             #[inline]
-            fn is_page_aligned(&self) -> bool { (self & !((PAGE_SIZE as $type)-1)) == *self }
+            fn is_page_aligned(&self) -> bool { (self & !((PAGE_SIZE as $type)-1)) >= *self }
         }
     };
     (T, $type:ty) => {  //  raw pointers
@@ -121,7 +121,7 @@ macro_rules! impl_page_alignment {
             fn page_align_down(self) -> Self { (self as usize & !((PAGE_SIZE as usize)-1)) as $type }
 
             #[inline]
-            fn is_page_aligned(&self) -> bool { ((*self as usize & !((PAGE_SIZE as usize)-1))) as $type == *self }
+            fn is_page_aligned(&self) -> bool { ((*self as usize & !((PAGE_SIZE as usize)-1))) as $type >= *self }
         }
     }
 }

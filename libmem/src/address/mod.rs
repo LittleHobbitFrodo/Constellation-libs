@@ -37,9 +37,14 @@ pub struct AlignedAddress<Addr: Address, const ALIGN: usize = PAGE_SIZE>(Addr);
 #[allow(private_bounds)]
 impl<Addr: Address, const ALIGN: usize> AlignedAddress<Addr, ALIGN> {
 
+    /// The generic `ALIGN` must be a power of two
+    const ALIGN_MUST_BE_A_POWER_OF_TWO: () = assert!(ALIGN.is_power_of_two());
+
     /// Constructs a new `AlignedAddress` if the given address is aligned to a certain boundary
     #[inline]
     pub fn new(address: Addr) -> Option<Self> {
+        let _ = Self::ALIGN_MUST_BE_A_POWER_OF_TWO;
+
         if address.is_aligned_to(ALIGN) {
             Some(Self(address))
         } else {
@@ -53,15 +58,24 @@ impl<Addr: Address, const ALIGN: usize> AlignedAddress<Addr, ALIGN> {
     /// It is up to the caller to guarantee that the `address` is properly
     /// aligned to a page boundary. If this rule is violated, the system
     /// can fall into undefined behaviour
-    pub const unsafe fn new_unchecked(address: Addr) -> Self { Self(address) }
+    pub const unsafe fn new_unchecked(address: Addr) -> Self {
+        let _ = Self::ALIGN_MUST_BE_A_POWER_OF_TWO;
+        Self(address)
+    }
 
     /// Creates a new `AlignedAddress` by aligning the given `address` down to a page boundary
     #[inline]
-    pub fn new_down(address: Addr) -> Self { Self(address.align_down(ALIGN)) }
+    pub fn new_down(address: Addr) -> Self {
+        let _ = Self::ALIGN_MUST_BE_A_POWER_OF_TWO;
+        Self(address.align_down(ALIGN))
+    }
 
     /// Creates a new `AlignedAddress` by aligning the given `address` up to a page boundary
     #[inline]
-    pub fn new_up(address: Addr) -> Self { Self(address.align_up(ALIGN)) }
+    pub fn new_up(address: Addr) -> Self {
+        let _ = Self::ALIGN_MUST_BE_A_POWER_OF_TWO;
+        Self(address.align_up(ALIGN))
+    }
 
     /// Offsets the address by a specified page count
     ///

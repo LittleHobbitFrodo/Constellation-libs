@@ -8,8 +8,11 @@ use core::{fmt::Alignment::Right, hint::cold_path, num::NonZero};
 use crate::cold_panic;
 
 
-
 /// The raw extent allocator internally used by the `ExtentAllocator` and `CachedExtentAllocator`
+///
+/// # Safety
+/// Due to implementation limitations, the generic constant ALIGN must be a power of two
+/// and must be greater than or equal to 64. Violating this rule will result in undefined behavior.
 #[repr(C)]
 pub struct RawExtentAlloc<const ALIGN: usize> {
     free: AllocMap<ALIGN>,
@@ -17,9 +20,16 @@ pub struct RawExtentAlloc<const ALIGN: usize> {
 }
 
 impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
+    /// Constructs a new uninitialized `RawExtentAllocator`
     pub const fn uninit() -> Self {
+        //  evaluates the assertion at comptime
+        let _ = Self::ALIGN_MUST_BE_POWER_OF_TWO_AND_GREATER_THAN_63;
+
         Self { used: BTreeMap::new(), free: AllocMap::uninit() }
     }
+
+    /// The generic `ALIGN` must be greater than or equal to 64 and must be a power of two
+    const ALIGN_MUST_BE_POWER_OF_TWO_AND_GREATER_THAN_63: () = assert!(ALIGN >= 64 && ALIGN.is_power_of_two());
 }
 
 
