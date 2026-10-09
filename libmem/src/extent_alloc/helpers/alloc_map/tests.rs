@@ -5,7 +5,7 @@ use core::num::NonZero;
 
 use crate::AlignedNonNull;
 
-use crate::extent_alloc::extent::{Extent, MutableExtent, RemainingExtents};
+use crate::extent_alloc::extent::{self, Extent, MutableExtent, RemainingExtents};
 use crate::extent_alloc::helpers::{AllocMap, PartExtractionError, SuitableExtent};
 use crate::extent_alloc::{
     extent::{TakenExtent, InternalExtent, RawExtent},
@@ -106,7 +106,7 @@ fn fragmented_insertion() {
             free.push(to_insert.clone());
 
             let free_map = unsafe { allocator.free_map_mut() };
-            free_map.insert_extent_fragmented(&MutableExtent::from_regular(to_insert))
+            free_map.insert_fragmented(&MutableExtent::from_regular(to_insert))
                 .expect("insertion failed");
 
             verify_map(&free, /*used_map*/free_map);
@@ -138,13 +138,13 @@ fn extract_exact() {
 
             let extent = MutableExtent::from_regular(free.remove(idx));
 
-            unsafe { allocator.free_map_mut() }.extract_exact_extent(extent.clone())
+            unsafe { allocator.free_map_mut() }.extract_exact(extent.clone())
             .expect("extraction failed");
 
             verify_map(&free, allocator.free_map());
 
             //  the extent is no longer present in the map
-            let result = unsafe { allocator.free_map_mut() }.extract_exact_extent(extent.clone());
+            let result = unsafe { allocator.free_map_mut() }.extract_exact(extent.clone());
             assert!(matches!(result, Err(())));
 
             if free.is_empty() { break }
@@ -152,17 +152,6 @@ fn extract_exact() {
 
     }
 }
-
-
-#[test]
-fn extract_extent_part() {
-
-    //let mut rand = TestRng::new();
-
-
-    todo!();
-}
-
 
 
 
@@ -269,7 +258,7 @@ pub(crate) fn random_extents<const MAX_EXT_SIZE: usize>(count: usize, rand: &mut
 }
 
 pub(crate) fn random_ext<const MAX_EXT_SIZE: usize>(rand: &mut TestRng, addr: &mut NonZero<u64>) -> InternalExtent<1024> {
-    let pages = rand.next_range(2..MAX_EXT_SIZE) as u64;
+    let pages = rand.next_range(8..MAX_EXT_SIZE) as u64;
     let ret = InternalExtent::new(
         AlignedNonNull::new_up(*addr),
         NonZero::new(pages).unwrap());

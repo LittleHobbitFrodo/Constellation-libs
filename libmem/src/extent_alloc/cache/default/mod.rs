@@ -9,7 +9,7 @@ use super::{ExtentCache, SourceAllocation, RefuelRequest};
 
 
 #[cfg(test)]
-use libtest::TestRng;
+mod tests;
 
 /// Extent cache used by the `CachedExtentAllocator` by default
 pub struct DefaultCache<const ALIGN: usize, Lay: LayoutDescriptor<ALIGN>> {
@@ -167,9 +167,46 @@ impl<const ALIGN: usize> AlignmentCache<ALIGN> {
         //      if it finds a suitable extent, it is manually exitted with the `break 'find_suitable` statement
         //      otherwise it falls into the `continue 'align_iter`
 
-        let align_index = layout.align().trailing_zeros() as usize;
+        //let align_index = layout.align().trailing_zeros() as usize;
 
-        'align_iter: for map in &mut self.0[align_index..] {
+        let map = self.get_mut(layout.align().get() as usize)?;
+
+        let (suitable, set_is_empty) = 'find_suitable: {
+
+            for (size, addresses) in map.range_mut(layout.size()..) {
+
+                let addr = addresses.pop_last()?;
+
+                //  found suitable extent
+
+                assume!(addr.alignment() >= layout.align());
+                assume!(*size >= layout.size());
+
+                break 'find_suitable (MutableExtent::new(addr, *size), addresses.is_empty())
+            }
+
+            //  No suitable extent was found
+            return None
+        };
+
+        //  suitable extent found
+        if set_is_empty {
+            let _ = map.remove(&suitable.size());
+        }
+
+
+        let mut allocated = suitable.clone();
+        if let Some(remainder) = unsafe { allocated.split_unchecked(layout.size()) } {
+            //  insert the extent back
+            if !self.insert(remainder) {
+                cold_panic!("failed to insert extent");
+            }
+        }
+
+        return Some(suitable)
+
+
+        /*'align_iter: for map in &mut self.0[align_index..] {
 
             let (suitable, set_empty) = 'find_suitable: {
                 while let Some((size, addresses)) = map.range_mut(layout.size()..).next() {
@@ -220,7 +257,7 @@ impl<const ALIGN: usize> AlignmentCache<ALIGN> {
             return Some(suitable)
         }
 
-        None
+        None*/
     }
 
 
@@ -244,108 +281,4 @@ impl<const ALIGN: usize> AlignmentCache<ALIGN> {
         (address.get() as usize / ALIGN).trailing_zeros() as usize
     }
 
-}
-
-
-#[test]
-fn insert() {
-
-    use alloc::vec::Vec;
-
-    use libtest::TestRng;
-
-    let mut rand = TestRng::new();
-
-    for _ in 0..256 {
-
-        let mut cache = AlignmentCache::<1024>::new();
-
-        let count = rand.next_range(512..2048);
-
-        let mut extents = Vec::with_capacity(count);
-
-
-        let mut addr = 1024;
-
-        for _ in 0..count {
-
-            let ext = random_extent(&mut rand, &mut addr);
-
-
-            //  insert the extent into the comparison vector and the cache
-            extents.push(ext.clone());
-
-            if !cache.insert(MutableExtent::from_regular(ext.clone())) {
-                panic!("failed to insert into the cache");
-            }
-
-            //  index within the cache's inner array
-            let index = AlignmentCache::index_from_address(ext.address()).min(ALIGN_ARRAY_LEN-1);
-
-            assume!(index < cache.0.len());
-
-
-            //  make sure that the extent is in the right place
-            let map = &cache.inner()[index];
-            let addr = map.get(&ext.size()).expect("map does not contain the size")
-                .get(&ext.address()).expect("map does not contain the address");
-
-            assert!(*addr == ext.address());
-
-
-
-
-            validate(cache.inner(), &extents);
-
-
-        }
-
-    }
-
-
-    fn validate(cache: &[SizedMap<1024>; ALIGN_ARRAY_LEN], cmp: &Vec<InternalExtent<1024>>) {
-
-        {   //  assert that the count of
-            let count: usize = cache.iter().map(|map| {
-                map.values().map(|addresses| addresses.len() ).sum::<usize>()
-            }).sum();
-
-            assert!(count == cmp.len());
-        }
-
-        for extent in cmp {
-
-            let index = AlignmentCache::index_from_address(extent.address()).min(ALIGN_ARRAY_LEN-1);
-
-            assume!(index < cache.len());
-
-            cache.get(index).unwrap().get(&extent.size()).expect("cache does not contain the size")
-                .get(&extent.address()).expect("cache does not contain the address");
-        }
-    }
-
-
-}
-
-#[test]
-fn extract_suitable() {
-
-    use libtest::{TestRng, println};
-    use alloc::vec::Vec;
-
-    todo!();
-}
-
-
-
-#[cfg(test)]
-fn random_extent(rand: &mut TestRng, addr: &mut u64) -> InternalExtent<1024> {
-
-    let address = AlignedNonNull::new_up(NonZero::new(*addr).unwrap());
-
-    let size = NonZero::new(rand.next_range(1..512) as u64).unwrap();
-
-    *addr += size.get() * 1024;
-
-    InternalExtent::new(address, size)
 }

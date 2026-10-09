@@ -83,7 +83,7 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
         for ext in iter.into_iter() {
             match ext {
                 TakenExtent::Free(ext) => {
-                    if let Err(_) = self.free.insert_extent_fragmented(&MutableExtent::from_regular(ext)) {
+                    if let Err(_) = self.free.insert_fragmented(&MutableExtent::from_regular(ext)) {
                         cold_panic!("found overlapping extents")
                     }
                 },
@@ -113,7 +113,7 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
 
 
         //  remove the suitable extent from the free map
-        if let Err(_) = self.free.extract_exact_extent(suitable.clone()) {
+        if let Err(_) = self.free.extract_exact(suitable.clone()) {
             cold_path();
             return None
         }
@@ -128,26 +128,26 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
         {   //  re-insert left and right into the free map
 
             if let Some(left) = &left {
-                if let Err(_) = self.free.insert_extent_fragmented(left) {
+                if let Err(_) = self.free.insert_fragmented(left) {
                     //  recovery: re-insert suitable to the free map
-                    if let Err(_) = self.free.insert_extent_fragmented(&suitable) {
+                    if let Err(_) = self.free.insert_fragmented(&suitable) {
                         cold_panic!("could not re-insert suitable")
                     }
                 }
             }
 
             if let Some(right) = right {
-                if let Err(_) = self.free.insert_extent_fragmented(&right) {
+                if let Err(_) = self.free.insert_fragmented(&right) {
                     //  recovery: remove left and insert the suitable into the free map
                     cold_path();
 
                     if let Some(left) = left {
-                        if let Err(_) = self.free.extract_exact_extent(left) {
+                        if let Err(_) = self.free.extract_exact(left) {
                             cold_panic!("ExtentAllocator recovery failed: failed to remove left extent")
                         }
                     }
 
-                    if let Err(_) = self.free.insert_extent_fragmented(&suitable) {
+                    if let Err(_) = self.free.insert_fragmented(&suitable) {
                         cold_panic!("ExtentAllocator recovery failed: could not re-insert suitable")
                     }
 
@@ -196,7 +196,7 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
         }
 
         //  insert the extent into the free map
-        if let Err(_) = self.free.insert_extent(ext.clone()) {
+        if let Err(_) = self.free.insert(ext.clone()) {
 
             //  recovery: re-insert ext into the used map
             if let Some(_) = self.used.insert(ext.address(), ext.size()) {
@@ -269,7 +269,7 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
         }
 
         //  insert part into the free map
-        if let Err(_) = self.free.insert_extent_fragmented(&part) {
+        if let Err(_) = self.free.insert_fragmented(&part) {
             cold_panic!("failed to insert the deallocated part into the free map")
         }
 

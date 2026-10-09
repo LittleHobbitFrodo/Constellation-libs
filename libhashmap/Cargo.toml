@@ -1,0 +1,8 @@
+[package]
+name = "libhashmap"
+description = "provides various HashMap and HashSet types"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+libtest = { path="../libtest" }

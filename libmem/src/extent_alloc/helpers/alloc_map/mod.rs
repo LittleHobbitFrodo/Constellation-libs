@@ -132,7 +132,7 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     /// Removes the extent from the map
     ///
     /// Returned `Err` indicates that the extent was not found
-    pub(crate) fn extract_exact_extent(&mut self, extent: MutableExtent<ALIGN>) -> Result<(), ()> {
+    pub(crate) fn extract_exact(&mut self, extent: MutableExtent<ALIGN>) -> Result<(), ()> {
 
         let by_max_align = match self.size_index.get_mut(&extent.size()) {
             Some(by_size) => by_size,
@@ -177,7 +177,7 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
 
 
 
-    /// Same as `extract_exact_extent_from()`, but this splits the extent based on
+    /// Same as `extract_exact()`, but this splits the extent based on
     /// the `layout` requirements and inserts the remaining space into the map again
     ///
     /// An returned `Err`or indicates that the extent was not found
@@ -185,12 +185,12 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     /// # Parameters
     /// - `extent` is the extent found in the passed `map` that satisfies `layout`
     ///   - It is thus needed to be properly aligned and at least the same size as dictated by the `layout`
-    pub(crate) fn extract_extent(&mut self, mut extent: MutableExtent<ALIGN>, layout: impl LayoutDescriptor<ALIGN>) -> Result<MutableExtent<ALIGN>, ()> {
+    pub(crate) fn extract_and_split(&mut self, mut extent: MutableExtent<ALIGN>, layout: impl LayoutDescriptor<ALIGN>) -> Result<MutableExtent<ALIGN>, ()> {
 
         //  used in recovery
         let original = extent.clone();
 
-        if let Err(_) = self.extract_exact_extent(extent.clone()) {
+        if let Err(_) = self.extract_exact(extent.clone()) {
             cold_path();
             return Err(())
         }
@@ -203,10 +203,10 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
                 //  create new entries in size_index and map
                 //  DEfragmentation is undesired
 
-                if let Err(_) = self.insert_extent_fragmented(&put_back) {
+                if let Err(_) = self.insert_fragmented(&put_back) {
                     //  recovery: re-insert original
                     cold_path();
-                    match self.insert_extent_fragmented(&original) {
+                    match self.insert_fragmented(&original) {
                         Ok(_) => return Err(()),
                         Err(_) => cold_recovery_panic!("failed to re-insert the original extent"),
                     }
@@ -223,63 +223,9 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     }
 
 
-    /// Extracts the `part` of the `ext`ent from the map
-    /// - Removes the `part` from `ext` and inserts the newly created extents
-    pub(crate) fn extract_extent_part(&mut self, ext: MutableExtent<ALIGN>, part: MutableExtent<ALIGN>) -> Result<(), PartExtractionError> {
-
-        let RemainingExtents { left: front, right: remainder } = match part.clone().remove_from(ext.clone()) {
-            Ok(rem_exts) => rem_exts,
-            Err(_) => return Err(PartExtractionError::PartDoesNotFit)
-        };
-
-        //  remove the whole extent
-        if let Err(_) = self.extract_exact_extent(ext.clone()) {
-            return Err(PartExtractionError::UnregisteredExtent)
-        }
-
-        //  insert the front into (DEfragmentation is undesired)
-        if let Some(front) = &front {
-            if let Err(_) = self.insert_extent_fragmented(&front) {
-                cold_path();
-
-                //  recovery: re-insert ext back
-                if let Err(_) = self.insert_extent_fragmented(&ext) {
-                    cold_recovery_panic!("failed to re-insert the extent")
-                }
-
-                return Err(PartExtractionError::InternalError)
-            }
-        }
-
-        //  insert the remainder (DEfragmentation is undesired)
-        if let Some(rem) = remainder {
-            if let Err(_) = self.insert_extent_fragmented(&rem) {
-                cold_path();
-
-                //  recovery: extract front, insert ext
-                if let Some(front) = front {
-                    if let Err(_) = self.extract_exact_extent(front) {
-                        cold_recovery_panic!("failed to re-extract front extent")
-                    }
-                }
-
-                if let Err(_) = self.insert_extent_fragmented(&ext) {
-                    cold_recovery_panic!("failed to re-insert the extent")
-                }
-
-                return Err(PartExtractionError::InternalError)
-            }
-        }
-
-        Ok(())
-
-    }
-
-
-
     /// Inserts the extent into the `map` and `size_index`
     /// - Does not take care of fragmentation
-    pub(crate) fn insert_extent_fragmented(&mut self, ext: &MutableExtent<ALIGN>) -> Result<(), ()> {
+    pub(crate) fn insert_fragmented(&mut self, ext: &MutableExtent<ALIGN>) -> Result<(), ()> {
 
         //  insert into the map
         //      addresses are unique => fail if alread in there
@@ -310,7 +256,7 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     ///
     /// Since any state where this function is unable to perform its
     /// task is considered unexpected and/or undefined, it will simply panic when such state is detected
-    pub(crate) fn insert_extent(&mut self, mut ext: MutableExtent<ALIGN>) -> Result<(), ()> {
+    pub(crate) fn insert(&mut self, mut ext: MutableExtent<ALIGN>) -> Result<(), ()> {
 
         //todo!("check");
 
@@ -372,15 +318,15 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
                 };
 
                 //  defragmentation complete, now insert
-                if let Err(_) = self.insert_extent_fragmented(&merged) {
+                if let Err(_) = self.insert_fragmented(&merged) {
                     //  recovery: re-insert the original and neighbor
 
                     cold_path();
-                    if let Err(_) = self.insert_extent_fragmented(&original) {
+                    if let Err(_) = self.insert_fragmented(&original) {
                         cold_recovery_panic!("failed to reinsert the original extent")
                     }
 
-                    if let Err(_) = self.insert_extent_fragmented(&MutableExtent::from_regular(neighbor.into_regular::<InternalExtent<ALIGN>>())) {
+                    if let Err(_) = self.insert_fragmented(&MutableExtent::from_regular(neighbor.into_regular::<InternalExtent<ALIGN>>())) {
                         cold_recovery_panic!("failed to reinsert the neighboring extent")
                     }
 
@@ -390,71 +336,9 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
                 Ok(())
             },
             None => {   //  no neighbor => no defragmentation
-                self.insert_extent_fragmented(&ext)
+                self.insert_fragmented(&ext)
             }
         }
-    }
-
-
-    /// Splits the given extent to the given `size` and inserts
-    /// the shrinked and remainder extent into the map
-    ///
-    /// Returns `Err` if the extent could not be found
-    ///
-    /// Panics if `size` is larger than the extent size
-    pub(crate) fn split_extent(&mut self, mut ext: MutableExtent<ALIGN>, size: NonZero<u64>) -> Result<(), ()> {
-
-        assert!(size < ext.size());
-
-        //  remove the extent because overlapping extents in the map are forbidden
-        self.extract_exact_extent(ext.clone())?;
-
-        let original = ext.clone();
-
-        let remainder = match unsafe { ext.split_unchecked(size) } {
-            Some(rem) => rem,
-            None => {
-                //  given that `size < ext.size()` this branch shall never be taken
-                cold_path();
-                unreachable!("split_unchecked() returned None, this should never happen")
-            }
-        };
-
-        //  since the user expects that the allocated extent
-        // must be deallocated whole, DEfragmentation undesired
-        if let Err(_) = self.insert_extent_fragmented(&ext) {
-            cold_path();
-
-            //  recovery: insert back ext
-            match self.insert_extent_fragmented(&ext) {
-                Ok(_) => return Err(()),
-                Err(_) => cold_recovery_panic!("failed to insert the splitted extent")
-            }
-        }
-
-
-        //  the remainder extent is allocated by the cache
-        // so it needs to be in the used map as well
-        //
-        // remainder extent becomes the next suitable extent (variable)
-        // for the next call, so DEfragmentation is undesired once again
-        match self.insert_extent_fragmented(&remainder) {
-           Ok(_) => Ok(()),
-           Err(_) => {
-               cold_path();
-
-               //   recovery: remove ext, insert original
-               if let Err(_) = self.extract_exact_extent(ext) {
-                   cold_recovery_panic!("failed to insert remainder extent")
-               }
-
-               match self.insert_extent_fragmented(&original) {
-                   Ok(_) => return Err(()),
-                   Err(_) => cold_panic!("failed to insert"),
-               }
-           }
-        }
-
     }
 }
 
