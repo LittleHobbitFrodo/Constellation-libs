@@ -86,7 +86,7 @@ ExtentAllocator<ALIGN, Ext, Lay> {
     #[inline]
     #[must_use]
     pub fn alloc_contignous<'me>(&'me mut self, layout: Lay) -> Option<ScopedExtent<'me, ALIGN, Ext, Self>> {
-        self.alloc.allocate_exact(layout).map(|ext| unsafe {
+        self.alloc.allocate_single(layout).map(|ext| unsafe {
             ScopedExtent::<'me, ALIGN, Ext, Self>::from_extent(Ext::new(ext.address(), ext.size()))
         } )
     }

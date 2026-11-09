@@ -84,15 +84,16 @@ impl<const ALIGN: usize, Lay: LayoutDescriptor<ALIGN>> ExtentCache<ALIGN, Lay> f
 
 
             //  construct layout for the allocation
-            let align = unsafe { NonZero::new_unchecked(1 << i) };
+            //let align = unsafe { NonZero::new_unchecked(1 << i) };
 
             let layout = unsafe {
-                ExtentLayout::from_pages_with_align_unchecked(size, align)
+                Lay::from_pages_unchecked(size)
+                //ExtentLayout::from_pages_with_align_unchecked(size, align)
             };
 
 
             //  allocate the extent
-            if let Some(ext) = gas_station.allocate_exact(layout) {
+            if let Some(ext) = gas_station.allocate_single(layout) {
                 //if let Some(_) = map.insert(ext.size(), ext.address()) {
                 if !map.entry(ext.size()).or_default().insert(ext.address()) {
                     //  recovery: deallocate the extent
@@ -191,6 +192,7 @@ impl<const ALIGN: usize> AlignmentCache<ALIGN> {
 
         //  suitable extent found
         if set_is_empty {
+            cold_path();
             let _ = map.remove(&suitable.size());
         }
 
@@ -203,7 +205,7 @@ impl<const ALIGN: usize> AlignmentCache<ALIGN> {
             }
         }
 
-        return Some(suitable)
+        Some(suitable)
 
 
         /*'align_iter: for map in &mut self.0[align_index..] {

@@ -153,7 +153,7 @@ CachedExtentAllocator<ALIGN, Ext, Lay, Cache> {
                 //  could not be allocated by the cache
                 //      => allocate manually
 
-                self.alloc.allocate_exact(layout).map(|ext| unsafe {
+                self.alloc.allocate_single(layout).map(|ext| unsafe {
                     ScopedExtent::from_extent(Ext::new(ext.address(), ext.size()))
                 } )
             },
@@ -168,7 +168,7 @@ CachedExtentAllocator<ALIGN, Ext, Lay, Cache> {
 
                 self.cache.refuel(&mut self.alloc);
 
-                self.alloc.allocate_exact(layout).map(|ext| unsafe {
+                self.alloc.allocate_single(layout).map(|ext| unsafe {
                     ScopedExtent::from_extent(Ext::new(ext.address(), ext.size()))
                 })
             }

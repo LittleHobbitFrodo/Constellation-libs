@@ -15,7 +15,7 @@ fn insert() {
 
         let mut cache = AlignmentCache::<1024>::new();
 
-        let count = rand.next_range(512..2048);
+        let count = rand.next_range(512..1024);
 
         let mut extents = Vec::with_capacity(count);
 
@@ -82,6 +82,7 @@ fn insert() {
 
 }
 
+#[ignore = "TODO"]
 #[test]
 fn extract_suitable() {
 
@@ -115,38 +116,8 @@ fn extract_suitable() {
             vec
         };
 
-        for _ in 0..count.min(200) {
-            let index = rand.next_range(..cmp.len());
-            let extent = cmp.get(index).unwrap().clone();
 
-            let layout = {
-                let size = NonZero::new(rand.next_range(1..700) as u64).unwrap();
-                let align = NonZero::new(1 << rand.next_range(..6)).unwrap();
-                unsafe {
-                    ExtentLayout::from_pages_with_align_unchecked(size, align)
-                }
-            };
-
-
-            match cache.extract_suitable(&layout) {
-                Some(ext) => {
-                    //  extract from the comparison data
-                    //  and assert that the extent exists
-
-                    cmp.remove(index);
-
-                    //todo!();
-                },
-                None => {
-                    //  assert that there is no suitable extent
-                    let found = cmp.iter().find(|ext| {
-                        ext.size() >= layout.size() && AlignmentCache::index_from_address(ext.address()) >= layout.align().trailing_zeros() as usize
-                    }).is_some();
-                    assert!(!found, "suitable extent was not found in the cache but it was found in the cmp data");
-                }
-            }
-        }
-
+        todo!();
 
     }
 

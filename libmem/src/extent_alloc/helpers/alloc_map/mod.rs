@@ -1,12 +1,16 @@
-use alloc::collections::BTreeSet;
+use alloc::vec::Vec;
 
 use super::{AddressMap, SizeMap};
-use crate::{AlignedNonNull, Alignment, NonNullAddress, cold_panic, assume, extent_alloc::{extent::RemainingExtents, raw_alloc::PartDeallocError}};
+use crate::extent_alloc::ExtentAlloc;
+use crate::{AlignedNonNull, Alignment, cold_panic, assume, extent_alloc::raw_alloc::PartDeallocError};
 
-use core::{hint::cold_path, mem::ManuallyDrop, num::{NonZero, NonZeroIsize}};
+use crate::extent_alloc::extent::{Batch, RawExtent, RemainingExtents, ScopedExtent};
+
+use core::range::legacy;
+use core::{hint::cold_path, num::NonZero};
 
 use crate::extent_alloc::{
-    extent::{Extent, InternalExtent, MutableExtent, RawExtent}, layout::LayoutDescriptor};
+    extent::{Extent, MutableExtent}, layout::LayoutDescriptor};
 
 
 #[cfg(test)]
@@ -38,10 +42,14 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
 
     /// Finds a suitable extent to satisfy the given `layout`
     ///
-    /// The returned extent is the one considered suitable (i.e., one that meets the alignment and size requirements)
-    /// - The size of the returned extent may not exactly match the requested size,
-    /// but the extent is guaranteed to be at least as large as specified by the `layout`
-    pub(crate) fn find_suitable(&self, layout: impl LayoutDescriptor<ALIGN>) ->  Option<SuitableExtent<ALIGN>> {
+    /// Returns a pair of extents, deemed `suitable` and `allocated`. The `suitable`
+    /// extent is the one the found by this function. It is guaranteed to satisfy
+    /// both the alignment and size contraints. The `allocated` extent marks the
+    /// part of the `suitable` extent that does exactly fulfill the given layout.
+    /// It is guaranteed that the `allocated` extent fits into the `suitable` extent
+    ///
+    /// This function searches the `layout.size()..` range
+    pub(crate) fn find_suitable(&self, layout: &impl LayoutDescriptor<ALIGN>) ->  Option<SuitableExtent<ALIGN>> {
 
         for (size, by_max_align) in self.size_index.range(layout.size()..) {
 
@@ -50,23 +58,8 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
                 //  max_align contains the maximum alignment that any address within the extent can have
 
                 for address in addresses.iter() {
-                    let suitable = MutableExtent::new(*address, *size);
-
-                    let allocated = {
-                        let addr = unsafe {
-                            //  safety: since `address` cannot be NULL, align_up cannot produce NULL output
-                            NonZero::new_unchecked(address.get().align_up(layout.align().get() as usize))
-                        };
-
-                        assume!(addr.get().is_aligned_to(layout.align().get() as usize));
-
-                        let addr = AlignedNonNull::new(addr).unwrap();
-
-                        MutableExtent::new(addr, layout.size())
-                    };
-
-                    if allocated.fits_into(&suitable) {
-                        return Some(SuitableExtent { suitable, allocated })
+                    if let Some(suitable) = SuitableExtent::from_suitable(MutableExtent::new(*address, *size), layout) {
+                        return Some(suitable)
                     }
                 }
             }
@@ -86,45 +79,30 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     /// the allocated extent size with the `layout` size (the allocated extent always meets the
     /// alignment requirement). If the allocated extent size is greater than or equal
     /// to the requested size, the extent is considered suitable.
-    pub(crate) fn find_closest_to(&self, layout: impl LayoutDescriptor<ALIGN>) -> Option<SuitableExtent<ALIGN>> {
+    ///
+    /// This function searches the `..layout.size()` range
+    #[inline(never)]
+    pub(crate) fn find_closest_to(&self, layout: &impl LayoutDescriptor<ALIGN>) -> Option<SuitableExtent<ALIGN>> {
 
-        //  contains `(size, &AlignMap)`
-        let mut closest = self.size_index.iter().next()
-            .map(|(size, map_ref)| (*size, map_ref) )?;
+        //  iterate sizes greater than or equal to `layout.size()`
+        if let Some(suitable) = self.find_suitable(layout) {
+            return Some(suitable)
+        }
 
-        for (size, by_max_align) in self.size_index.iter() {
-            for (_max_align, addresses) in by_max_align.range(layout.align()..) {
 
-                //  max_align contains the maximum alignment that any address within the extent can have
+        //  reverse iterate sizes smaller than `layout.size()`
+        for (size, align_map) in self.size_index.range(..layout.size()).rev() {
 
-                for address in addresses.iter() {
-                    let suitable = MutableExtent::new(*address, *size);
+            for (_, addresses) in align_map.range(layout.align()..) {
 
-                    let allocated = {
-                        let addr = unsafe {
-                            //  safety: since `address` cannot be NULL, align_up cannot produce NULL output
-                            NonZero::new_unchecked(address.get().align_up(layout.align().get() as usize))
-                        };
-
-                        assume!(addr.get().is_aligned_to(layout.align().get() as usize));
-                        let addr = AlignedNonNull::new(addr).unwrap();
-
-                        MutableExtent::new(addr, layout.size())
-                    };
-
-                    if allocated.fits_into(&suitable) {
-                        return Some(SuitableExtent { suitable, allocated })
-                    }
+                if let Some(suitable) = SuitableExtent::from_suitable(MutableExtent::new(*addresses.first()?, *size), layout) {
+                    return Some(suitable)
                 }
-                //  did not found suitable extent => set closest
-                closest = (*size, by_max_align);
 
             }
         }
 
-
-        //  suitable extent not found => find closest
-        todo!("suitable not found, find closest to suitable");
+        None
 
     }
 
@@ -223,6 +201,66 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     }
 
 
+    /// Extracts the `base` extent from the map, removes the `part` from it and inserts the remaining space back into the map
+    ///
+    /// This function is made to simplify `allocate_exact()`, `allocate_closest()` and simillar functions
+    ///
+    /// This function is tested by testing the `RawExtentAlloc::allocate_exact()` function
+    pub(crate) fn extract_and_remove_from(&mut self, base: MutableExtent<ALIGN>, part: &'_ MutableExtent<ALIGN>) -> Result<(), ()> {
+        //  remove the suitable extent from the free map
+        if let Err(_) = self.extract_exact(base.clone()) {
+            cold_path();
+            return Err(())
+        }
+
+        //todo!("unit test");
+
+
+        //  remove allocated from suitable
+        let RemainingExtents { left, right } = unsafe { part.clone().remove_from_unchecked(base.clone()) };
+
+
+
+        {   //  re-insert left and right into the free map
+
+            if let Some(left) = &left {
+                if let Err(_) = self.insert_fragmented(left) {
+
+                    //  recovery: re-insert suitable to the free map
+                    cold_path();
+
+                    if let Err(_) = self.insert_fragmented(&base) {
+                        cold_panic!("could not re-insert suitable")
+                    }
+                }
+            }
+
+            if let Some(right) = right {
+
+                if let Err(_) = self.insert_fragmented(&right) {
+
+                    //  recovery: remove left and insert the suitable into the free map
+                    cold_path();
+
+                    if let Some(left) = left {
+                        if let Err(_) = self.extract_exact(left) {
+                            cold_panic!("ExtentAllocator recovery failed: failed to remove left extent")
+                        }
+                    }
+
+                    if let Err(_) = self.insert_fragmented(&base) {
+                        cold_panic!("ExtentAllocator recovery failed: could not re-insert suitable")
+                    }
+
+                    return Err(())
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+
     /// Inserts the extent into the `map` and `size_index`
     /// - Does not take care of fragmentation
     pub(crate) fn insert_fragmented(&mut self, ext: &MutableExtent<ALIGN>) -> Result<(), ()> {
@@ -254,91 +292,105 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
 
     /// Inserts the extent into the given map and performs defragmentation routine if needed
     ///
-    /// Since any state where this function is unable to perform its
-    /// task is considered unexpected and/or undefined, it will simply panic when such state is detected
-    pub(crate) fn insert(&mut self, mut ext: MutableExtent<ALIGN>) -> Result<(), ()> {
-
-        //todo!("check");
+    /// # Defrag. routine
+    /// The defragmentation routine works this way:
+    /// 1. Checks whether the inserted extent would touch any neighboring extent (if there are any)
+    /// 2. Extracts the neighboring extents that are touching the inserted extent
+    /// 3. Merge the extracted extents into the inserted one
+    /// 4. Inserts the merged extent
+    pub(crate) fn insert_defragment(&mut self, mut ext: MutableExtent<ALIGN>) -> Result<(), ()> {
 
         let ext_end_address = ext.end_address();
 
-        //  used in recovery
-        let original = ext.clone();
+        //  check for the neighbor with higher address
+        if let Some(right_size) = self.map.remove(&ext_end_address) {
+            //  `right` is the right neighbor of ext
+            //      => merge `ext` and `right`
+            //
+            //  NOTE: the `right` extent is already removed from the map
 
-        //  remove from map
-        match self.map.remove(&ext_end_address) {
-            Some(neigh_size) => {
-                //  has neighbor => defragment
+            let right = MutableExtent::new(ext_end_address, right_size);
 
-                //let neigh_end_address = ext_end_address.aligned_add(neigh_size.get() as usize);
-                let neighbor = MutableExtent::new(ext_end_address, neigh_size);
+            assume!(ext.address() < right.address());
+            assume!(ext.is_touching(&right));
 
-                {   //  manually remove the neighbor from size_index
-                    //      - neighbor is already removed from the map
-                    //
-                    //      - ext_end_address = neighbor's starting address
+            //  remove ONLY FROM `size_index`
+            if let Err(_) = remove_sized_index(&mut self.size_index, right.clone()) {
+                cold_path();
 
-                    //  panics here are intended: since the neighboring extent was
-                    // found in the map, it must always be in the size index.
-                    // - Otherwise the state of the allocator is considered corrupted
-
-                    let by_max_align = match self.size_index.get_mut(&neigh_size) {
-                        Some(by_align) => by_align,
-                        None => cold_panic!("could not find neighboring extent in size_index:by_size"),
-                    };
-
-                    //let addresses = match by_max_align.get_mut(&neigh_end_address.max_alignment()) {
-                    let addresses = match by_max_align.get_mut(&neighbor.find_max_alignment()) {
-                        Some(a) => a,
-                        None => cold_panic!("could not found neighboring extent in size_index:by_align"),
-                    };
-
-                    if !addresses.remove(&ext_end_address) {
-                        cold_panic!("could not remove the neighboring extent from size_index:addresses");
-                    }
-
-                    if addresses.is_empty() {
-                        //if let None = by_max_align.remove(&ext_end_address.max_alignment()) {
-                        if let None = by_max_align.remove(&ext.find_max_alignment()) {
-                            cold_panic!("failed to remove the address map from size_index");
-                        }
-                    }
+                //  recovery: reinsert to the map
+                if let Some(_) = self.map.insert(ext_end_address, right_size) {
+                    cold_recovery_panic!("failed to reinsert the extent");
                 }
 
-                let neighbor = MutableExtent::new(ext_end_address, neigh_size);
+            }
 
-                //  defragment => merge ext and neighbor
-                let merged = {
-                    debug_assert!(ext.is_touching(&neighbor));
-
-                    unsafe {
-                        ext.merge_unchecked(neighbor.clone())
-                    }
-                    ext
-                };
-
-                //  defragmentation complete, now insert
-                if let Err(_) = self.insert_fragmented(&merged) {
-                    //  recovery: re-insert the original and neighbor
-
-                    cold_path();
-                    if let Err(_) = self.insert_fragmented(&original) {
-                        cold_recovery_panic!("failed to reinsert the original extent")
-                    }
-
-                    if let Err(_) = self.insert_fragmented(&MutableExtent::from_regular(neighbor.into_regular::<InternalExtent<ALIGN>>())) {
-                        cold_recovery_panic!("failed to reinsert the neighboring extent")
-                    }
-
-                    return Err(())
-                }
-
-                Ok(())
-            },
-            None => {   //  no neighbor => no defragmentation
-                self.insert_fragmented(&ext)
+            unsafe {
+                ext.merge_unchecked(right);
             }
         }
+
+
+        //  check for the neighbor with lower address
+        match self.map.range(..ext_end_address).next_back().map(|(a, s)| (*a, *s) ) {
+            Some((left_addr, left_size)) if ext.address() == left_addr.aligned_add(left_size.get() as usize) => {
+                //  ext is touching the left neighbor
+
+                if let Err(_) = self.extract_exact(MutableExtent::new(left_addr, left_size)) {
+                    cold_panic!("failed to remove extent");
+                }
+
+                ext = MutableExtent::new(left_addr, ext.size().saturating_add(left_size.get()));
+            },
+            _ => {
+                //  any of the extents with lower addresses do not touch `ext`
+                //      => do nothing
+            }
+        }
+
+
+        //  merge the modified `ext`
+        return self.insert_fragmented(&ext);
+
+
+
+
+        /// Removes the extent from the given `SizeMap`, panics if the extraction fails
+        ///
+        /// Error recovery: this function will return `Err` if the extent cannot be found,
+        /// all the user is to do in this case is to re-insert the extent into the `map`
+        fn remove_sized_index<const ALIGN: usize>(size_index: &mut SizeMap<ALIGN>, ext: MutableExtent<ALIGN>) -> Result<(), ()> {
+            //  manually remove the neighbor from size_index
+            //      - neighbor is already removed from the map
+            //
+            //      - ext_end_address = neighbor's starting address
+
+            let by_max_align = match size_index.get_mut(&ext.size()) {
+                Some(by_align) => by_align,
+                None => return Err(())
+            };
+
+            let addresses = match by_max_align.get_mut(/*&neighbor*/&ext.find_max_alignment()) {
+                Some(a) => a,
+                None => return Err(())
+            };
+
+            if !addresses.remove(&ext.end_address()) {
+                return Err(())
+            }
+
+            if addresses.is_empty() {
+                cold_path();
+
+                if let None = by_max_align.remove(&ext.find_max_alignment()) {
+                    cold_path();
+                    return Err(())
+                }
+            }
+
+            Ok(())
+        }
+
     }
 }
 
@@ -367,11 +419,43 @@ impl PartExtractionError {
 }
 
 
+/// Returned by extent allocator's `find_suitable()` function.
 /// Contains the extent that is deemed suitable and its part to be allocated
+///
+///
 pub struct SuitableExtent<const ALIGN: usize> {
     /// The extent that the `allocated` fits into
     pub suitable: MutableExtent<ALIGN>,
     /// The part of the `suitable` extent that is meant to be allocated
     /// - Is guaranteed to fit into `suitable`
     pub allocated: MutableExtent<ALIGN>,
+}
+
+
+impl<const ALIGN: usize> SuitableExtent<ALIGN> {
+
+    /// Converts the `suitable` extent into `SuitableExtent` if `suitable` can satisfy `layout`'s requirements
+    pub(crate) fn from_suitable(suitable: MutableExtent<ALIGN>, layout: &impl LayoutDescriptor<ALIGN>) -> Option<Self> {
+
+        let allocated = {
+            let addr = unsafe {
+                //  safety: since `address` cannot be NULL, align_up cannot produce NULL output
+                NonZero::new_unchecked(suitable.address().get().align_up(layout.align().get() as usize))
+            };
+
+            assume!(addr.get().is_aligned_to(layout.align().get() as usize));
+
+            let addr = AlignedNonNull::new(addr).unwrap();
+
+            MutableExtent::new(addr, layout.size())
+        };
+
+        if allocated.fits_into(&suitable) {
+            Some(SuitableExtent { suitable, allocated })
+        } else {
+            None
+        }
+
+    }
+
 }

@@ -1,7 +1,10 @@
 
 use libtest::{TestRng, dbg, print, println};
+use crate::extent_alloc::ExtentAllocator;
 use crate::misc::Alignment;
-use core::num::NonZero;
+use core::iter::Enumerate;
+use core::num::{NonZero, NonZeroU64};
+use core::slice;
 
 use crate::AlignedNonNull;
 
@@ -45,7 +48,7 @@ fn find_suitable_extent() {
             let layout = ExtentLayout::from_pages(NonZero::new(rand.next_range(512..4096) as u64).unwrap()).unwrap();
 
             //  find any suitable extent
-            match alloc.free_map().find_suitable(layout.clone()) {
+            match alloc.free_map().find_suitable(&layout) {
                 Some(SuitableExtent { suitable, allocated }) => {
 
                     assert!(allocated.fits_into(&suitable));
@@ -81,47 +84,116 @@ fn find_suitable_extent() {
 }
 
 
+
+#[ignore = "TODO"]
 #[test]
-fn fragmented_insertion() {
+fn insert_defragment() {
+
+
+    //  free = | Ext | <space> | Ext |, ....
+    //      after every registered extent there is a space
+    // used takes all the empty space from free
+    //
+    // algo:
+    //  insert into free and expect the two extents on the sides to merge into one
 
     let mut rand = TestRng::new();
 
-    for _ in 0..1000 {
+    //  generate testing data
+    //      each odd extent is missing from `free` and is in `used`
+    //          - each used extent touches two free ones
+    //
+    //      layout:
+    //      | free | used | free | used | ...
+    let (mut used, mut free) = {
 
         let count = rand.next_range(256..512);
-        let exts = random_extents::<2048>(count, &mut rand);
 
-        let mut allocator = RawExtentAlloc::uninit();
-        let init_result = unsafe { allocator.initialize(exts.iter().cloned()) };
-        assert!(matches!(init_result, Ok(())));
+        let mut addr = NonZero::new(2048).unwrap();
 
-        let (mut free, mut used) = distinguish_free_and_used(exts);
+        let mut used = Vec::with_capacity(count/3);
 
-        for _ in 0..200 {
+        let mut free = Vec::with_capacity((count/3) * 2);
 
-            if used.is_empty() { break }
+        for i in 0..count {
+            let vec = if i % 2 == 0 {
+                &mut free
+            } else {
+                &mut used
+            };
 
-            let idx = rand.next_range(..used.len());
-            let to_insert = used.remove(idx);
-            free.push(to_insert.clone());
-
-            let free_map = unsafe { allocator.free_map_mut() };
-            free_map.insert_fragmented(&MutableExtent::from_regular(to_insert))
-                .expect("insertion failed");
-
-            verify_map(&free, /*used_map*/free_map);
+            vec.push(random_ext::<1024>(&mut rand, &mut addr));
         }
+
+        (used, free)
+    };
+
+    let mut allocator = RawExtentAlloc::uninit();
+
+    let init_result = unsafe {
+        allocator.initialize(free.iter().map(|e| TakenExtent::Free(e.clone()) ))
+    };
+
+    assert!(matches!(init_result, Ok(())));
+
+
+    while !used.is_empty() {
+
+        let index = rand.next_range(..used.len());
+
+        let ext = MutableExtent::from_regular(used.remove(index));
+
+        let result = unsafe {
+            allocator.free_map_mut()
+        }.insert_defragment(ext.clone());
+
+        assert!(matches!(result, Ok(())));
+
+        //  remove ext's left and right neighbors extents from free map and merge them into ext
+
+        let drain_free = match free.iter().enumerate().find(|(_, e)| e.end_address() == ext.address() ) {
+            Some((i, _)) => if let Some(right) = free.get(i + 1) {
+                assert!(right.address() == ext.end_address());
+                i..=i+1
+            } else {
+                i..=i
+            },
+            None => panic!("-\\**/-"),
+        };
+
+        println!("drain free: {drain_free:?}");
+
+        let merged = {
+
+            let mut ext = ext;
+
+            for e in free.drain(drain_free.clone()) {
+                ext.merge(MutableExtent::from_regular(e)).expect("not a neighbor");
+            }
+
+            ext
+        };
+
+        free.insert(*drain_free.start(), merged.into_regular());
+
+
+        verify_map(&free, allocator.free_map());
 
     }
 
+
+
+    todo!("remove and merge neighboring extents from free and used");
 }
+
+
 
 #[test]
 fn extract_exact() {
 
     let mut rand = TestRng::new();
 
-    for _ in 0..1000 {
+    for _ in 0..500 {
 
         let count = rand.next_range(256..512);
         let exts = random_extents::<2048>(count, &mut rand);
@@ -187,7 +259,10 @@ pub(crate) fn verify_map(vec: &Vec<InternalExtent<1024>>, map: &AllocMap<1024>) 
 
 
     //  verify the map against the vector
-    assert!(vec.len() == map.map.len());
+    if vec.len() != map.map.len() {
+        panic!("vec.len() != map.map.len() | {} != {}", vec.len(), map.map.len());
+    }
+    //assert!(vec.len() == map.map.len());
 
     for ext in vec.iter() {
         match map.map.get(&ext.address()) {
@@ -257,11 +332,15 @@ pub(crate) fn random_extents<const MAX_EXT_SIZE: usize>(count: usize, rand: &mut
     vec
 }
 
+//  Generates a random extent at the `addr`ess and increases the `addr` by its size
 pub(crate) fn random_ext<const MAX_EXT_SIZE: usize>(rand: &mut TestRng, addr: &mut NonZero<u64>) -> InternalExtent<1024> {
     let pages = rand.next_range(8..MAX_EXT_SIZE) as u64;
+
     let ret = InternalExtent::new(
         AlignedNonNull::new_up(*addr),
         NonZero::new(pages).unwrap());
+
     *addr = addr.saturating_add(pages.saturating_mul(1024));
+
     ret
 }

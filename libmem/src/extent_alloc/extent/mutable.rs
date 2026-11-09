@@ -1,6 +1,6 @@
 
 
-use core::{cmp::Ordering::{Equal, Greater, Less}, mem::ManuallyDrop, num::NonZero, ops::BitOrAssign};
+use core::{cmp::Ordering::{Equal, Greater, Less}, fmt::Debug, mem::ManuallyDrop, num::NonZero, ops::BitOrAssign};
 
 use crate::{AlignedAddress, AlignedNonNull, Alignment, NonNullAddress, cold_panic, extent_alloc::extent::{Extent, InternalExtent, RawExtent}};
 
@@ -272,6 +272,17 @@ pub struct RemainingExtents<const ALIGN: usize> {
     pub left: Option<MutableExtent<ALIGN>>,
     /// The remaining space
     pub right: Option<MutableExtent<ALIGN>>,
+}
+
+
+impl<const ALIGN: usize> Debug for MutableExtent<ALIGN> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if f.alternate() {
+            write!(f, "MutExt {{ {:p} -> {:p} }}", self.address(), self.end_address())
+        } else {
+            write!(f, "MutExt {{ {:p}, {} }}", self.address(), self.size())
+        }
+    }
 }
 
 

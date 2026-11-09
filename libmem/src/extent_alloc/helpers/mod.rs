@@ -1,6 +1,6 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::{num::NonZero, ops::{Deref, DerefMut}};
-use crate::{Address, AlignedNonNull, extent_alloc::extent::Extent};
+use crate::{Address, AddressMarker, AlignedNonNull, extent_alloc::extent::{Extent, MutableExtent}};
 
 
 
@@ -79,4 +79,17 @@ impl<const ALIGN: usize> DerefMut for SizeMap<ALIGN> {
 
 impl<const ALIGN: usize> SizeMap<ALIGN> {
     pub const fn new() -> Self { Self(BTreeMap::new()) }
+
+    /// Insterst the extent into the map, does NOT defragment
+    #[must_use]
+    pub fn insert(&mut self, extent: MutableExtent<ALIGN>) -> Result<(), ()> {
+        let by_align = self.entry(extent.size()).or_default();
+        let addresses = by_align.entry(extent.find_max_alignment()).or_default();
+        if addresses.insert(extent.address()) {
+           Ok(())
+        } else {
+            Err(())
+        }
+    }
+
 }

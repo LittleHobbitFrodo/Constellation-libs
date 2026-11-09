@@ -50,6 +50,10 @@ impl<const ALIGN: usize> Extent<ALIGN> for InternalExtent<ALIGN> {
 
 impl<const ALIGN: usize> core::fmt::Debug for InternalExtent<ALIGN> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Extent {{ a: {:p}, size: {} }}", self.address(), self.size)
+        if f.alternate() {
+            write!(f, "IntExt {{ {:p} -> {:p} }}", self.address(), self.end_address())
+        } else {
+            write!(f, "IntExt {{ {:p}, {} }}", self.address(), self.size())
+        }
     }
 }

@@ -6,6 +6,8 @@ use core::num::NonZero;
 mod default;
 pub use default::ExtentLayout;
 
+use crate::extent_alloc::extent::Extent;
+
 
 /// Defines the memory layout when allocating a extent. All extent
 /// layout descriptors must satisfy one invariant: **both their size
@@ -13,6 +15,11 @@ pub use default::ExtentLayout;
 pub trait LayoutDescriptor<const ALIGN: usize> where Self: Sized + Clone {
     /// Maximum possible amount of pages that the descriptor can hold
     const MAX_PAGE_COUNT: u64;
+
+
+    /// Indicates the smallest possible alignment
+    /// that the implementation supports
+    const MIN_ALIGN: usize = ALIGN;
 
     /// An error type used by the `from_pages()` function
     type Err: Sized;
@@ -33,21 +40,33 @@ pub trait LayoutDescriptor<const ALIGN: usize> where Self: Sized + Clone {
     /// - This may be asserted by the allocator
     fn align(&self) -> NonZero<u64>;
 
-    /*/// Splits a bigger extent into smaller pieces if it cannot be allocated
+
+    /*/// Splits the layout into two smaller layouts. Together, these
+    /// two layouts are equivalent to the layout that existed
+    /// before this action. This means:
+    /// 1. The sum of the layout sizes is the same as the
+    /// size of the layout before this action
+    /// 2. The alignment of the layouts may change only to
+    /// the extent permitted by the specific implementation.
+    fn split_half(&mut self) -> Option<Self>;
+
+
+    /// Splits the layout and determines the best configuration for an extent with the given size
+    fn split_at(&mut self, size: NonZero<u64>) -> Option<Self>;*/
+
+
+    /// Removes the `other` layout from `self`, returns what is left after the removal (if anything)
     ///
-    /// # Behaviour
-    /// This function is invoked by the `ExtentAllocator` when the current
-    /// block is too large to be allocated and is intended to work as
-    /// iterator. It thus may be called multiple times on the same frame
+    /// This function returning `None` does not mean failure, it simply
+    /// means that the `other` extent was at least as big as `self`
     ///
-    /// `split()` searches for a valid frame size that is smaller than `self`.
-    /// If found, it proceeds to shrink `self` by that size and returns the newly created frame
-    /// - > **Note for physical allocators**: It is reccomended that the calculation is architecture-specific and tries to find a value
-    /// that can be easily grabbed by the current paging implementaion
-    ///
-    /// Returns `None` if the smaller frame size cannot be found
-    fn split(&mut self) -> Option<Self>;*/
+    /// User is free to implement the function to best fit the current usecase. However,
+    /// they have to guarantee, that the result's size will be equal to
+    /// `self.size()saturating_sub(other.size())`
+    fn remove(self, other: Self) -> Option<Self>;
+
 }
+
 
 /// An error type returned by `LayoutDescriptor::from_pages()`
 /// as error by default
