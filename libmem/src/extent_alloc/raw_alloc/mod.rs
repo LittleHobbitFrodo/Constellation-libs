@@ -1,5 +1,12 @@
+
+#[cfg(test)]
+mod test;
+
+
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 
+#[cfg(test)]
+use crate::extent_alloc::ExtentAllocMarker;
 use crate::{AlignedNonNull, assume, extent_alloc::{
     ExtentAlloc, extent::{Batch, Extent, InternalExtent, MutableExtent, RawExtent, RemainingExtents, ScopedExtent, TakenExtent}, helpers::SuitableExtent, layout::LayoutDescriptor,
 }};
@@ -16,8 +23,9 @@ use crate::cold_panic;
 #[repr(C)]
 pub struct RawExtentAlloc<const ALIGN: usize> {
     free: AllocMap<ALIGN>,
-    used: BTreeMap<AlignedNonNull<NonZero<u64>, ALIGN>, NonZero<u64>>
+    used: BTreeMap<AlignedNonNull<u64, ALIGN>, NonZero<u64>>
 }
+
 
 impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
     /// Constructs a new uninitialized `RawExtentAllocator`
@@ -46,14 +54,14 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
 
     /// Returns a reference to the used map
     #[inline(always)]
-    pub(crate) fn used_map(&self) -> &BTreeMap<AlignedNonNull<NonZero<u64>, ALIGN>, NonZero<u64>> {
+    pub(crate) fn used_map(&self) -> &BTreeMap<AlignedNonNull<u64, ALIGN>, NonZero<u64>> {
         &self.used
     }
 
 
     /// Returns a mutable reference to the used map
     #[inline(always)]
-    pub(crate) unsafe fn used_map_mut(&mut self) -> &mut BTreeMap<AlignedNonNull<NonZero<u64>, ALIGN>, NonZero<u64>> {
+    pub(crate) unsafe fn used_map_mut(&mut self) -> &mut BTreeMap<AlignedNonNull<u64, ALIGN>, NonZero<u64>> {
         &mut self.used
     }
 
@@ -205,6 +213,9 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
             }
         }
 
+        #[cfg(test)]
+        libtest::println!("post find exact");
+
 
 
         //  find closest, shrink layout, repeat
@@ -235,12 +246,17 @@ impl<const ALIGN: usize> RawExtentAlloc<ALIGN> {
                     };
                 },
                 None => {
+                    #[cfg(test)]
+                    libtest::println!("'tfind_closest_to() returned None");
                     cold_path();
                     return None
                 }
             }
 
         }
+
+        #[cfg(test)]
+        libtest::println!("\tpost find closest");
 
 
 
@@ -403,3 +419,12 @@ pub enum PartDeallocError {
     /// Something went wrong, but the system was able to recover
     InternalError = 2,
 }
+
+
+
+//  for various testing purposes
+#[cfg(test)]
+impl<const ALIGN: usize> ExtentAllocMarker for RawExtentAlloc<ALIGN> {}
+
+#[cfg(test)]
+impl<const ALIGN: usize> ExtentAlloc<ALIGN> for RawExtentAlloc<ALIGN> {}

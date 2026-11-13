@@ -2,7 +2,7 @@
 
 use core::{cmp::Ordering::{Equal, Greater, Less}, fmt::Debug, mem::ManuallyDrop, num::NonZero, ops::BitOrAssign};
 
-use crate::{AlignedAddress, AlignedNonNull, Alignment, NonNullAddress, cold_panic, extent_alloc::extent::{Extent, InternalExtent, RawExtent}};
+use crate::{AlignedAddress, AlignedNonNull, Alignment, cold_panic, extent_alloc::extent::{Extent, InternalExtent, RawExtent}};
 
 
 
@@ -10,14 +10,14 @@ use crate::{AlignedAddress, AlignedNonNull, Alignment, NonNullAddress, cold_pani
 #[derive(Clone)]
 #[repr(C)]
 pub struct MutableExtent<const ALIGN: usize> {
-    start: AlignedNonNull<NonZero<u64>, ALIGN>,
+    start: AlignedNonNull<u64, ALIGN>,
     size: NonZero<u64>
 }
 
 
 impl<const ALIGN: usize> Extent<ALIGN> for MutableExtent<ALIGN> {
     #[inline(always)]
-    fn address(&self) -> AlignedNonNull<NonZero<u64>, ALIGN> { self.start }
+    fn address(&self) -> AlignedNonNull<u64, ALIGN> { self.start }
 
     fn size(&self) -> NonZero<u64> { self.size }
 }
@@ -26,7 +26,7 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
 
     /// Constructs a new `MutableExtent`
     #[inline(always)]
-    pub const fn new(address: AlignedNonNull<NonZero<u64>, ALIGN>, pages: NonZero<u64>) -> Self {
+    pub const fn new(address: AlignedNonNull<u64, ALIGN>, pages: NonZero<u64>) -> Self {
         Self { size: pages, start: address }
     }
 
@@ -39,7 +39,7 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
             Equal => Ok(None),
             Greater => {
 
-                let new_addr = self.address().aligned_add(size.get() as usize);
+                let new_addr = self.address().aligned_add_saturate(size.get());
 
                 let new_size = unsafe {
                     let new_size = self.size().get() - size.get();
@@ -79,9 +79,9 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
         let mut align = ALIGN as u64;
 
         loop {
-            let aligned_down = addr.get().align_down(align as usize);
+            let aligned_down = addr.as_nullable().align_down(align as usize);
 
-            if aligned_down < self.address().get() {
+            if aligned_down < self.address().as_nullable() {
                 //  the address does not fit into the extent's address space
                 align  = align >> 1;
                 break
@@ -107,7 +107,7 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
         if self.size() == size {
             None
         } else {
-            let new_addr = self.address().aligned_add(size.get() as usize);
+            let new_addr = self.address().aligned_add_saturate(size.get());
 
             let new_size = unsafe {
                 let new_size = self.size().get() - size.get();
@@ -185,7 +185,7 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
 
 
         let front = {
-            let size = self.address().get().saturating_sub(ext.address().get()) / ALIGN as u64;
+            let size = self.address().as_nullable().saturating_sub(ext.address().as_nullable()) / ALIGN as u64;
 
             match NonZero::new(size) {
                 Some(size) => Some(MutableExtent::new(ext.address(), size)),
@@ -197,7 +197,7 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
 
             let end_addr = self.end_address();
 
-            let size = ext.end_address().get().saturating_sub(end_addr.get()) / ALIGN as u64;
+            let size = ext.end_address().as_nullable().saturating_sub(end_addr.as_nullable()) / ALIGN as u64;
 
             match NonZero::new(size) {
                 Some(size) => Some(MutableExtent::new(self.end_address(), size)),
@@ -210,11 +210,11 @@ impl<const ALIGN: usize> MutableExtent<ALIGN> {
 
     /*/// Returns the starting address of the extent
     #[inline(always)]
-    pub fn address(&self) -> AlignedNonNull<NonZero<u64>, ALIGN> { self.start }
+    pub fn address(&self) -> AlignedNonNull<u64, ALIGN> { self.start }
 
     /// Calculates the ending address of the frame
     #[inline(always)]
-    pub fn end_address(&self) -> AlignedNonNull<NonZero<u64>, ALIGN> {
+    pub fn end_address(&self) -> AlignedNonNull<u64, ALIGN> {
         self.start.aligned_add(self.size().get() as usize)
     }
 
@@ -292,12 +292,16 @@ fn remove_from_unchecked() {
     use libtest::{println, TestRng};
 
 
+    let mut paths_taken: usize = 0;
+    let mut i: u32 = 0;
+
+
     const BIGGER_ADDR: u64 = 1024;
     const BIGGER_SIZE: u64 = 1024 * 4;
 
     let mut rand = TestRng::new();
 
-    for _ in 0..30_000 {
+    loop {
         let big: MutableExtent<1024> = {
             let addr = AlignedNonNull::new(NonZero::new(BIGGER_ADDR).unwrap()).unwrap();
             MutableExtent::new(addr, NonZero::new(BIGGER_SIZE).unwrap())
@@ -307,7 +311,7 @@ fn remove_from_unchecked() {
             let addr = rand.next_range(BIGGER_ADDR as usize..(BIGGER_ADDR + BIGGER_SIZE) as usize - 1) as u64;
             let addr = AlignedNonNull::new_down(NonZero::new(addr).unwrap()).unwrap();
 
-            let size = rand.next_range(1..(big.end_address().get().strict_sub(addr.get()) / 1024) as usize) as u64;
+            let size = rand.next_range(1..(big.end_address().as_nullable().strict_sub(addr.as_nullable()) / 1024) as usize) as u64;
             let size = NonZero::new(size).unwrap();
 
             MutableExtent::new(addr, size)
@@ -321,6 +325,9 @@ fn remove_from_unchecked() {
 
 
         if small.address() == big.address() {
+
+            paths_taken |= 0b01;
+
             //  no front
             assert!(matches!(front, None));
 
@@ -333,7 +340,7 @@ fn remove_from_unchecked() {
 
                 assert!(rem.address() == small.end_address());
 
-                let expected_size = big.end_address().get().strict_sub(small.end_address().get()) / 1024;
+                let expected_size = big.end_address().as_nullable().strict_sub(small.end_address().as_nullable()) / 1024;
                 let expected_size = NonZero::new(expected_size).unwrap();
 
                 assert!(rem.size() == expected_size);
@@ -343,18 +350,22 @@ fn remove_from_unchecked() {
             //  case where small.size == big.size is handled above
             //      => small.size < big.size
 
+            paths_taken |= 0b10;
+
             assert!(matches!(remainder, None));
 
             let front = front.expect("front is None instead of Some()");
 
             assert!(front.address() == big.address());
 
-            let expected_size = small.address().get().strict_sub(big.address().get()) / 1024;
+            let expected_size = small.address().as_nullable().strict_sub(big.address().as_nullable()) / 1024;
             let expected_size = NonZero::new(expected_size).unwrap();
 
             assert!(front.size() == expected_size);
         } else {
             //  both front and rem are Some
+
+            paths_taken |= 0b111;
 
             let front = front.expect("front is None instead of Some");
             let rem = remainder.expect("remainder is None instead of Some");
@@ -362,7 +373,7 @@ fn remove_from_unchecked() {
             {   //  validate front
                 assert!(front.address() == big.address());
 
-                let expected_size = small.address().get().strict_sub(big.address().get()) / 1024;
+                let expected_size = small.address().as_nullable().strict_sub(big.address().as_nullable()) / 1024;
                 let expected_size = NonZero::new(expected_size).unwrap();
 
                 assert!(front.size() == expected_size);
@@ -371,12 +382,19 @@ fn remove_from_unchecked() {
             {   //  validate remainder
                 assert!(rem.end_address() == big.end_address());
 
-                let expected_size = big.end_address().get().strict_sub(small.end_address().get()) / 1024;
+                let expected_size = big.end_address().as_nullable().strict_sub(small.end_address().as_nullable()) / 1024;
                 let expected_size = NonZero::new(expected_size).unwrap();
 
                 assert!(rem.size() == expected_size);
             }
         }
+
+
+        if i >= 3_000 && paths_taken == 0b111 {
+            break;
+        }
+
+        i = i.checked_add(1).expect("no all paths in the test were taken");
 
     }
 
@@ -409,7 +427,7 @@ fn split_unchecked() {
 
         assert!(ext.address() == original.address());
         assert!(ext.size() == split_size);
-        assert!(*splitted.address() == *ext.address().aligned_add(split_size.get() as usize));
+        assert!(splitted.address() == ext.address().aligned_add_saturate(split_size.get()));
         assert!(splitted.size().get() == original.size().get() - split_size.get());
     }
 }
@@ -423,7 +441,10 @@ fn split() {
 
     let mut rand = TestRng::new();
 
-    for _ in 0..2000 {
+    let mut paths_taken: usize = 0;
+    let mut i: u32 = 0;
+
+    loop {
 
         let mut ext: MutableExtent<1024> = MutableExtent::new(
             AlignedNonNull::new_up(NonZero::new(rand.next_range(1..10240) as u64).unwrap()),
@@ -435,16 +456,23 @@ fn split() {
 
         let splitted = match split_size.cmp(&ext.size()) {
             Less => match ext.split(split_size) {
-                Ok(Some(ext)) => ext,
+                Ok(Some(ext)) => {
+                    paths_taken |= 0b001;
+                    ext
+                },
                 Ok(None) => panic!("split produced Ok(None) instead of Ok(Some())"),
                 Err(_) => panic!("split failed when it should have succeeded"),
             },
             Equal => match ext.split(split_size) {
-                Ok(None) => continue,   //  expected
+                Ok(None) => {
+                    paths_taken |= 0b010;
+                    continue    //  expected
+                },
                 Ok(Some(_)) => panic!("split produced Ok(Some()) instead of Ok(None)"),
                 Err(_) => panic!("split failed when it should have succeeded"),
             },
             Greater => {
+                paths_taken |= 0b100;
                 assert!(matches!(ext.split(split_size), Err(())));
                 continue
             },
@@ -452,8 +480,15 @@ fn split() {
 
         assert!(ext.address() == original.address());
         assert!(ext.size() == split_size);
-        assert!(*splitted.address() == *ext.address().aligned_add(split_size.get() as usize));
+        assert!(splitted.address() == ext.address().aligned_add_saturate(split_size.get()));
         assert!(splitted.size().get() == original.size().get() - split_size.get());
+
+        if i >= 2_000 && paths_taken == 0b111 {
+            break
+        }
+
+        i = i.checked_add(1).expect("no all paths in the test were taken");
+
     }
 
 }
@@ -474,16 +509,16 @@ fn find_max_alignment() {
 
         let alignment = ext.find_max_alignment();
 
-        let aligned_down = ext.end_address().get().align_down(alignment.get() as usize);
-        let aligned_up = ext.address().get().align_up(alignment.get() as usize);
+        let aligned_down = ext.end_address().as_nullable().align_down(alignment.get() as usize);
+        let aligned_up = ext.address().as_nullable().align_up(alignment.get() as usize);
 
 
-        assert!(ext.address().get() <= aligned_down && ext.end_address().get() >= aligned_down);
-        assert!(ext.address().get() <= aligned_up && ext.end_address().get() >= aligned_up);
+        assert!(ext.address().as_nullable() <= aligned_down && ext.end_address().as_nullable() >= aligned_down);
+        assert!(ext.address().as_nullable() <= aligned_up && ext.end_address().as_nullable() >= aligned_up);
         assert!(alignment.is_power_of_two());
 
-        let next_alignment = ext.end_address().get().align_down((alignment.get() << 1) as usize);
+        let next_alignment = ext.end_address().as_nullable().align_down((alignment.get() << 1) as usize);
 
-        assert!(next_alignment < ext.address().get());
+        assert!(next_alignment < ext.address().as_nullable());
     }
 }

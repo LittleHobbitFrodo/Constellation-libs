@@ -1,4 +1,4 @@
-use core::marker::PhantomData;
+use core::{fmt::Debug, marker::PhantomData};
 use core::num::NonZero;
 
 use crate::extent_alloc::{ExtentAlloc, extent::{AbstractExtent, BuiltinExt, Extent, /*OwnedExtent,*/ RawExtent}};
@@ -79,13 +79,13 @@ Extent<ALIGN> for ScopedExtent<'alloc, ALIGN, Ext, Alloc> {
 
     /// Returns the starting address of the extent
     #[inline(always)]
-    fn address(&self) -> crate::AlignedNonNull<NonZero<u64>, ALIGN> {
+    fn address(&self) -> crate::AlignedNonNull<u64, ALIGN> {
         self.ext.address()
     }
 
     /// Calculates the ending address of the frame
     #[inline(always)]
-    fn end_address(&self) -> crate::AlignedNonNull<NonZero<u64>, ALIGN> {
+    fn end_address(&self) -> crate::AlignedNonNull<u64, ALIGN> {
         self.ext.end_address()
     }
 
@@ -107,5 +107,18 @@ Extent<ALIGN> for ScopedExtent<'alloc, ALIGN, Ext, Alloc> {
     #[inline(always)]
     fn is_overlapping(&self, other: &'_ Self) -> bool {
         self.ext.is_overlapping(&other.ext)
+    }
+}
+
+
+impl<'alloc, const ALIGN: usize, Ext: Extent<ALIGN> + RawExtent<ALIGN>, Alloc: ExtentAlloc<ALIGN>>
+Debug for ScopedExtent<'alloc, ALIGN, Ext, Alloc> where Ext: Debug {
+
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if f.alternate() {
+            write!(f, "ScopedExtent {{ {:#?} }}", self.ext)
+        } else {
+            write!(f, "ScopedExtent {{ {:?} }}", self.ext)
+        }
     }
 }

@@ -6,6 +6,9 @@ use core::num::NonZero;
 mod default;
 pub use default::ExtentLayout;
 
+#[cfg(test)]
+pub(crate) mod test_layout;
+
 use crate::extent_alloc::extent::Extent;
 
 
@@ -62,7 +65,7 @@ pub trait LayoutDescriptor<const ALIGN: usize> where Self: Sized + Clone {
     ///
     /// User is free to implement the function to best fit the current usecase. However,
     /// they have to guarantee, that the result's size will be equal to
-    /// `self.size()saturating_sub(other.size())`
+    /// `self.size().saturating_sub(other.size())`
     fn remove(self, other: Self) -> Option<Self>;
 
 }

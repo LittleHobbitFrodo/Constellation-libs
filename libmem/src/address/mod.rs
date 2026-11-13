@@ -1,4 +1,4 @@
-use core::fmt::Pointer;
+use core::{fmt::Pointer, hint::cold_path, num::NonZero, ptr::NonNull};
 
 use crate::{PAGE_SIZE, PageAlignment};
 
@@ -7,6 +7,7 @@ use crate::Alignment;
 
 mod non_null;
 pub use non_null::*;
+use non_null::props::NonNullProps;
 
 /// Marks any address type and provides functions to work with its alignment
 #[allow(private_bounds)]
@@ -17,7 +18,7 @@ impl Address for usize {}
 
 impl Address for u64 {}
 
-impl<T> Address for *const T {}
+//impl<T> Address for *const T {}
 impl<T> Address for *mut T {}
 
 
@@ -112,6 +113,7 @@ impl<Addr: Address, const ALIGN: usize> From<Addr> for AlignedAddress<Addr, ALIG
         if value.is_aligned_to(ALIGN) {
             Self(value)
         } else {
+            cold_path();
             panic!("unaligned address")
         }
     }
@@ -121,7 +123,20 @@ impl<Addr: Address, const ALIGN: usize> From<Addr> for AlignedAddress<Addr, ALIG
 
 /// Marker trait that is internally used to indicate any address type
 pub(crate) trait AddressMarker
-where Self: PageAlignment + Sized + Copy + Default {
+where Self: PageAlignment + Sized + Copy + Default + Ord + PartialOrd + Eq + PartialEq {
+
+    /// The `NonZero` or `NonNull` type associated with this type
+    type NonNullable: NonNullProps<Nullable = Self, Unum = Self::Unum, Snum = Self::Snum, NonNullUnum = Self::NonNullUnum>;
+
+    /// Unsigned number type used to do operations
+    type Unum: Sized + Copy + Clone;
+
+    /// Signed number type used to do operations
+    type Snum: Sized + Copy + Clone;
+
+    type NonNullUnum: Sized + Copy + Clone;
+
+    /// Formats the data as a pointer into the formatter
     fn fmt_ptr(&self, f: &'_ mut core::fmt::Formatter) -> core::fmt::Result;
 
     /// Adds the page count to itself
@@ -134,6 +149,13 @@ where Self: PageAlignment + Sized + Copy + Default {
 }
 
 impl AddressMarker for usize {
+
+    type NonNullable = NonZero<usize>;
+    type Unum = usize;
+    type Snum = isize;
+    type NonNullUnum = NonZero<usize>;
+
+
     fn fmt_ptr(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "0x{:X}", self)
     }
@@ -150,6 +172,12 @@ impl AddressMarker for usize {
 
 }
 impl AddressMarker for u64 {
+
+    type NonNullable = NonZero<u64>;
+    type Unum = u64;
+    type Snum = i64;
+    type NonNullUnum = NonZero<u64>;
+
     #[inline(always)]
     fn fmt_ptr(&self, f: &'_ mut core::fmt::Formatter) -> core::fmt::Result {
         write!(f, "0x{:X}", self)
@@ -166,7 +194,13 @@ impl AddressMarker for u64 {
     }
 
 }
-impl<T> AddressMarker for *const T {
+/*impl<T> AddressMarker for *const T {
+
+    type NonNullable = NonNull<T>;
+    type Unum = usize;
+    type Snum = isize;
+
+
     #[inline(always)]
     fn fmt_ptr(&self, f: &'_ mut core::fmt::Formatter) -> core::fmt::Result {
         Pointer::fmt(&self, f)
@@ -182,8 +216,16 @@ impl<T> AddressMarker for *const T {
         (self as usize).saturating_add_signed(pages.saturating_mul(ALIGN as isize)) as Self
     }
 
-}
+}*/
+
+
 impl<T> AddressMarker for *mut T {
+
+    type NonNullable = NonNull<T>;
+    type Unum = usize;
+    type Snum = isize;
+    type NonNullUnum = NonZero<usize>;
+
     #[inline(always)]
     fn fmt_ptr(&self, f: &'_ mut core::fmt::Formatter) -> core::fmt::Result {
         Pointer::fmt(&self, f)
@@ -210,20 +252,39 @@ fn new() {
     type AlignedAddr = AlignedAddress<usize, 1024>;
 
     use libtest::TestRng;
-    let mut rand = TestRng::new();
 
-    for _ in 0..5000 {
+    let mut rand = TestRng::new();
+    let mut paths_taken: usize = 0;
+
+
+    let mut i = 0;
+
+    loop {
+
         let ptr = rand.next_range(..usize::MAX);
 
         if ptr.is_aligned_to(1024) {
             let addr = AlignedAddr::new(ptr)
                 .expect("new() returned None instead of Some()");
 
+            paths_taken |= 0b01;
+
             assert!(*addr == ptr);
         } else {
+            paths_taken |= 0b10;
             assert!(matches!(AlignedAddr::new(ptr), None));
         }
+
+        if i >= 5000 && paths_taken == 0b11 {
+            break
+        }
+
+        i += 1;
+
     }
+
+    assert!(paths_taken == 0b11);
+
 }
 
 
@@ -241,9 +302,11 @@ fn new_up_and_down() {
 
         let up = AlignedAddr::new_up(ptr);
         assert!(*up == ptr.align_up(1024));
+        assert!(ptr.align_up(1024).is_aligned_to(1024));
 
         let down = AlignedAddr::new_down(ptr);
         assert!(*down == ptr.align_down(1024));
+        assert!(ptr.align_down(1024).is_aligned_to(1024));
     }
 }
 

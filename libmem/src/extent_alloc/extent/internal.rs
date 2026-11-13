@@ -8,7 +8,7 @@ use crate::{AlignedNonNull, extent_alloc::extent::{BuiltinExt, RawExtent, Extent
 #[derive(Clone)]
 #[repr(C)]
 pub struct InternalExtent<const ALIGN: usize> {
-    start: AlignedNonNull<NonZero<u64>, ALIGN>,
+    start: AlignedNonNull<u64, ALIGN>,
     size: NonZero<u64>,
 }
 
@@ -19,7 +19,7 @@ impl<const ALIGN: usize> BuiltinExt for InternalExtent<ALIGN> {}
 //  mark constructible extent
 impl<const ALIGN: usize> RawExtent<ALIGN> for InternalExtent<ALIGN> {
     #[inline(always)]
-    fn new(address: AlignedNonNull<NonZero<u64>, ALIGN>, pages: NonZero<u64>) -> Self {
+    fn new(address: AlignedNonNull<u64, ALIGN>, pages: NonZero<u64>) -> Self {
         Self { start: address, size: pages }
     }
 }
@@ -39,7 +39,7 @@ impl<const ALIGN: usize> InternalExtent<ALIGN> {
 
 impl<const ALIGN: usize> Extent<ALIGN> for InternalExtent<ALIGN> {
     #[inline(always)]
-    fn address(&self) -> AlignedNonNull<NonZero<u64>, ALIGN> {
+    fn address(&self) -> AlignedNonNull<u64, ALIGN> {
         self.start
     }
 

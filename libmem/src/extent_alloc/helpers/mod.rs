@@ -4,7 +4,7 @@ use crate::{Address, AddressMarker, AlignedNonNull, extent_alloc::extent::{Exten
 
 
 
-mod alloc_map;
+pub(crate) mod alloc_map;
 pub(crate) use alloc_map::*;
 
 
@@ -12,10 +12,10 @@ pub(crate) use alloc_map::*;
 /// A map used internally by the allocator that uses addresses as keys and extent sizes as values
 #[repr(transparent)]
 #[derive(Default, Clone, Debug)]
-pub(crate) struct AddressMap<const ALIGN: usize>(BTreeMap<AlignedNonNull<NonZero<u64>, ALIGN>, NonZero<u64>>);
+pub(crate) struct AddressMap<const ALIGN: usize>(BTreeMap<AlignedNonNull<u64, ALIGN>, NonZero<u64>>);
 
 impl<const ALIGN: usize> Deref for AddressMap<ALIGN> {
-    type Target = BTreeMap<AlignedNonNull<NonZero<u64>, ALIGN>, NonZero<u64>>;
+    type Target = BTreeMap<AlignedNonNull<u64, ALIGN>, NonZero<u64>>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target { &self.0 }
@@ -37,11 +37,11 @@ impl<const ALIGN: usize> AddressMap<ALIGN> {
 /// - You get the index using `address.max_alignment()`
 #[repr(transparent)]
 #[derive(Default, Clone, Debug)]
-pub(crate) struct AlignMap<const ALIGN: usize>(BTreeMap<NonZero<u64>, BTreeSet<AlignedNonNull<NonZero<u64>, ALIGN>>>);
+pub(crate) struct AlignMap<const ALIGN: usize>(BTreeMap<NonZero<u64>, BTreeSet<AlignedNonNull<u64, ALIGN>>>);
 
 
 impl<const ALIGN: usize> Deref for AlignMap<ALIGN> {
-    type Target = BTreeMap<NonZero<u64>, BTreeSet<AlignedNonNull<NonZero<u64>, ALIGN>>>;
+    type Target = BTreeMap<NonZero<u64>, BTreeSet<AlignedNonNull<u64, ALIGN>>>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target { &self.0 }

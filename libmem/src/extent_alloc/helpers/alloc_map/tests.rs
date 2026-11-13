@@ -1,18 +1,15 @@
 
 use libtest::{TestRng, dbg, print, println};
-use crate::extent_alloc::ExtentAllocator;
 use crate::misc::Alignment;
-use core::iter::Enumerate;
-use core::num::{NonZero, NonZeroU64};
-use core::slice;
+use core::num::NonZero;
 
 use crate::AlignedNonNull;
 
-use crate::extent_alloc::extent::{self, Extent, MutableExtent, RemainingExtents};
-use crate::extent_alloc::helpers::{AllocMap, PartExtractionError, SuitableExtent};
+use crate::extent_alloc::extent::{Extent, MutableExtent};
+use crate::extent_alloc::helpers::{AllocMap, SuitableExtent};
 use crate::extent_alloc::{
     extent::{TakenExtent, InternalExtent, RawExtent},
-    layout::{ExtentLayout, LayoutDescriptor},
+    layout::{test_layout::TestLayout, LayoutDescriptor},
     raw_alloc::RawExtentAlloc,
 };
 
@@ -28,6 +25,7 @@ use alloc::vec::Vec;
 fn find_suitable_extent() {
 
     let mut rand = TestRng::new();
+    let mut paths_taken: usize = 0;
 
     for _ in 0..500 {
 
@@ -43,13 +41,16 @@ fn find_suitable_extent() {
 
 
 
+
         for _ in 0..128 {
 
-            let layout = ExtentLayout::from_pages(NonZero::new(rand.next_range(512..4096) as u64).unwrap()).unwrap();
+            let layout = TestLayout::from_pages(NonZero::new(rand.next_range(512..4096) as u64).unwrap()).unwrap();
 
             //  find any suitable extent
             match alloc.free_map().find_suitable(&layout) {
                 Some(SuitableExtent { suitable, allocated }) => {
+
+                    paths_taken |= 0b01;
 
                     assert!(allocated.fits_into(&suitable));
 
@@ -62,12 +63,14 @@ fn find_suitable_extent() {
                 },
                 None => {   //  assert that any valid extent does not exist
 
+                    paths_taken |= 0b10;
+
                     let was_found = free.iter().find(|suitable| {
 
                         //  align the address up to `layout.align()` to figure out where would the extent start
                         let aligned_up = /*unsafe*/ {
                             //  safety: align_up() always return a number larger than the input
-                            NonZero::new/*_unchecked*/(suitable.address().get().align_up(layout.align().get() as usize)).unwrap()
+                            NonZero::new/*_unchecked*/(suitable.address().as_nullable().align_up(layout.align().get() as usize)).unwrap()
                         };
 
                         let allocated = InternalExtent::new(AlignedNonNull::new(aligned_up).unwrap(), layout.size());
@@ -79,7 +82,10 @@ fn find_suitable_extent() {
                 }
             }
         }
+
     }
+
+    assert_eq!(paths_taken, 0b11);
 
 }
 
@@ -90,7 +96,10 @@ fn find_suitable_extent() {
 fn insert_defragment() {
 
 
-    //  free = | Ext | <space> | Ext |, ....
+    todo!();
+
+
+    /*//  free = | Ext | <space> | Ext |, ....
     //      after every registered extent there is a space
     // used takes all the empty space from free
     //
@@ -158,7 +167,7 @@ fn insert_defragment() {
             } else {
                 i..=i
             },
-            None => panic!("-\\**/-"),
+            None => panic!("-\\** /-"),
         };
 
         println!("drain free: {drain_free:?}");
@@ -183,7 +192,7 @@ fn insert_defragment() {
 
 
 
-    todo!("remove and merge neighboring extents from free and used");
+    todo!("remove and merge neighboring extents from free and used");*/
 }
 
 
@@ -211,7 +220,7 @@ fn extract_exact() {
             let extent = MutableExtent::from_regular(free.remove(idx));
 
             unsafe { allocator.free_map_mut() }.extract_exact(extent.clone())
-            .expect("extraction failed");
+                .expect("extraction failed");
 
             verify_map(&free, allocator.free_map());
 

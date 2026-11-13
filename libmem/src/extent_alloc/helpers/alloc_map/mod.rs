@@ -1,20 +1,22 @@
 use alloc::vec::Vec;
 
 use super::{AddressMap, SizeMap};
-use crate::extent_alloc::ExtentAlloc;
 use crate::{AlignedNonNull, Alignment, cold_panic, assume, extent_alloc::raw_alloc::PartDeallocError};
 
 use crate::extent_alloc::extent::{Batch, RawExtent, RemainingExtents, ScopedExtent};
 
-use core::range::legacy;
+use core::ops::RangeBounds;
+use core::ops::RangeInclusive;
 use core::{hint::cold_path, num::NonZero};
+
+use core::cmp::Ordering;
 
 use crate::extent_alloc::{
     extent::{Extent, MutableExtent}, layout::LayoutDescriptor};
 
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Invokes `cold_panic!()` with custom panic message
 macro_rules! cold_recovery_panic {
@@ -40,16 +42,65 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     }
 
 
+    /*/// Finds a suitable extent that satisfies the given layout
+    ///
+    /// This function achieves this as follows:
+    /// 1. Restricts `size_index` based on the given range
+    /// 2. Creates a range based on the passed `align_range`
+    ///     - `Less` => `..=layout.align()`
+    ///     - `Equal` => `layout.align()..=layout.align()`
+    ///     - `Greater` => `layout.align()..`
+    /// 3. It searches the `AlignMaps` based on the created range
+    pub fn find_in_range<Lay: LayoutDescriptor<ALIGN>>(&self, layout: &Lay, size_range: impl RangeBounds<NonZero<u64>>, align_range: Ordering) -> Option<SuitableExtent<ALIGN>> {
+
+        let align_range = make_range::<ALIGN, Lay>(&layout, align_range);
+
+
+        for (size, by_max_align) in self.size_index.range(size_range) {
+
+            for (_max_align, addresses) in by_max_align.range(align_range.clone()) {
+
+                //  max_align contains the maximum alignment that any address within the extent can have
+                for address in addresses.iter() {
+                    if let Some(suitable) = SuitableExtent::from_suitable(MutableExtent::new(*address, *size), layout) {
+                        return Some(suitable)
+                    }
+                }
+            }
+        }
+
+        return None;    //  no suitable extent found
+
+
+        fn make_range<const ALIGN: usize, Lay: LayoutDescriptor<ALIGN>>(layout: &Lay, order: Ordering) -> RangeInclusive<NonZero<u64>> {
+
+            const SMALLEST: NonZero<u64> = unsafe { NonZero::new_unchecked(1) };
+            const BIGGEST: NonZero<u64> = unsafe { NonZero::new_unchecked(u64::MAX) };
+
+            match order {
+                Ordering::Less => (SMALLEST..=layout.align()).into(),
+                Ordering::Equal => {
+                    let align = layout.align();
+                    align..=align
+                },
+                Ordering::Greater => layout.align()..=BIGGEST,
+            }
+        }
+
+    }*/
+
+
     /// Finds a suitable extent to satisfy the given `layout`
     ///
     /// Returns a pair of extents, deemed `suitable` and `allocated`. The `suitable`
-    /// extent is the one the found by this function. It is guaranteed to satisfy
+    /// extent is the one found by this function. It is guaranteed to satisfy
     /// both the alignment and size contraints. The `allocated` extent marks the
     /// part of the `suitable` extent that does exactly fulfill the given layout.
     /// It is guaranteed that the `allocated` extent fits into the `suitable` extent
     ///
     /// This function searches the `layout.size()..` range
-    pub(crate) fn find_suitable(&self, layout: &impl LayoutDescriptor<ALIGN>) ->  Option<SuitableExtent<ALIGN>> {
+    #[inline(always)]
+    pub fn find_suitable(&self, layout: &impl LayoutDescriptor<ALIGN>) ->  Option<SuitableExtent<ALIGN>> {
 
         for (size, by_max_align) in self.size_index.range(layout.size()..) {
 
@@ -82,7 +133,7 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     ///
     /// This function searches the `..layout.size()` range
     #[inline(never)]
-    pub(crate) fn find_closest_to(&self, layout: &impl LayoutDescriptor<ALIGN>) -> Option<SuitableExtent<ALIGN>> {
+    pub fn find_closest_to(&self, layout: &impl LayoutDescriptor<ALIGN>) -> Option<SuitableExtent<ALIGN>> {
 
         //  iterate sizes greater than or equal to `layout.size()`
         if let Some(suitable) = self.find_suitable(layout) {
@@ -110,7 +161,7 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
     /// Removes the extent from the map
     ///
     /// Returned `Err` indicates that the extent was not found
-    pub(crate) fn extract_exact(&mut self, extent: MutableExtent<ALIGN>) -> Result<(), ()> {
+    pub fn extract_exact(&mut self, extent: MutableExtent<ALIGN>) -> Result<(), ()> {
 
         let by_max_align = match self.size_index.get_mut(&extent.size()) {
             Some(by_size) => by_size,
@@ -333,7 +384,7 @@ impl<const ALIGN: usize> AllocMap<ALIGN> {
 
         //  check for the neighbor with lower address
         match self.map.range(..ext_end_address).next_back().map(|(a, s)| (*a, *s) ) {
-            Some((left_addr, left_size)) if ext.address() == left_addr.aligned_add(left_size.get() as usize) => {
+            Some((left_addr, left_size)) if ext.address() == left_addr.aligned_add_saturate(left_size.get()) => {
                 //  ext is touching the left neighbor
 
                 if let Err(_) = self.extract_exact(MutableExtent::new(left_addr, left_size)) {
@@ -440,7 +491,7 @@ impl<const ALIGN: usize> SuitableExtent<ALIGN> {
         let allocated = {
             let addr = unsafe {
                 //  safety: since `address` cannot be NULL, align_up cannot produce NULL output
-                NonZero::new_unchecked(suitable.address().get().align_up(layout.align().get() as usize))
+                NonZero::new_unchecked(suitable.address().as_nullable().align_up(layout.align().get() as usize))
             };
 
             assume!(addr.get().is_aligned_to(layout.align().get() as usize));

@@ -115,7 +115,7 @@ impl<const ALIGN: usize, Lay: LayoutDescriptor<ALIGN>> ExtentCache<ALIGN, Lay> f
 }
 
 /// `size` -> `address` pairs
-type SizedMap<const ALIGN: usize> = BTreeMap<NonZero<u64>, BTreeSet<AlignedNonNull<NonZero<u64>, ALIGN>>>;
+type SizedMap<const ALIGN: usize> = BTreeMap<NonZero<u64>, BTreeSet<AlignedNonNull<u64, ALIGN>>>;
 
 /// Holds an array of maps of extents. The array is indexed by the
 /// `trailing_zeroes()` of the layout alignment and each map contains
@@ -279,8 +279,8 @@ impl<const ALIGN: usize> AlignmentCache<ALIGN> {
 
     /// Calculates the index of the inner array based on the adress
     #[inline]
-    pub fn index_from_address(address: AlignedNonNull<NonZero<u64>, ALIGN>) -> usize {
-        (address.get() as usize / ALIGN).trailing_zeros() as usize
+    pub fn index_from_address(address: AlignedNonNull<u64, ALIGN>) -> usize {
+        (address.as_non_null().get() as usize / ALIGN).trailing_zeros() as usize
     }
 
 }

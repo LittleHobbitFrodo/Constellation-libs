@@ -31,17 +31,17 @@ where Self: Sized {
     #[inline]
     fn is_touching(&self, other: &'_ Self) -> bool {
         //  NOTE: Extents cannot be overlapping
-        *self.end_address() == *other.address()     //  |--SELF--||--OTHER--|
-        || *self.address() == *other.end_address()  //  |--OTHER--||--SELF--|
+        self.end_address() == other.address()     //  |--SELF--||--OTHER--|
+        || self.address() == other.end_address()  //  |--OTHER--||--SELF--|
     }
 
     /// Returns the starting address of the extent
-    fn address(&self) -> AlignedNonNull<NonZero<u64>, ALIGN>;
+    fn address(&self) -> AlignedNonNull<u64, ALIGN>;
 
     /// Calculates the ending address of the frame
     #[inline]
-    fn end_address(&self) -> AlignedNonNull<NonZero<u64>, ALIGN> {
-        self.address().aligned_add(self.size().get() as usize)
+    fn end_address(&self) -> AlignedNonNull<u64, ALIGN> {
+        self.address().aligned_add_saturate(self.size().get())
     }
 
     /// Returns the size in pages
@@ -54,7 +54,7 @@ where Self: Sized {
     ///   - Therefore `assert!(extent.fits_into(extent.clone()))` will pass
     #[inline]
     fn fits_into(&self, other: &'_ Self) -> bool {
-        *self.address() >= *other.address() && *self.end_address() <= *other.end_address()
+        self.address() >= other.address() && self.end_address() <= other.end_address()
     }
 
     /// Indicates whether the two extents are overlapping
@@ -67,7 +67,7 @@ where Self: Sized {
 
 /// Marks raw extents that can be used internally by the allocator
 pub trait RawExtent<const ALIGN: usize> {
-    fn new(address: AlignedNonNull<NonZero<u64>, ALIGN>, pages: NonZero<u64>) -> Self;
+    fn new(address: AlignedNonNull<u64, ALIGN>, pages: NonZero<u64>) -> Self;
 }
 
 /// Marks extent types that are defined within the `libmem` crate

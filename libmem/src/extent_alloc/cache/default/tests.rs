@@ -86,7 +86,9 @@ fn insert() {
 #[test]
 fn extract_suitable() {
 
-    use libtest::{TestRng, println};
+    todo!();
+
+    /*use libtest::{TestRng, println};
     use alloc::vec::Vec;
 
 
@@ -119,7 +121,7 @@ fn extract_suitable() {
 
         todo!();
 
-    }
+    }*/
 
 }
 
